@@ -4,42 +4,82 @@ Personal irregular-income budget planner. Tracks income vs bills across a pay pe
 
 ## Stack
 
-- **Next.js 16** App Router + React Server Components
+- **Next.js 16.2** (App Router, Turbopack) + **React 19.2**
 - **TypeScript** (strict)
-- **Tailwind CSS v4** + **shadcn/ui** (Radix primitives)
+- **Tailwind CSS v4** + **shadcn/ui** — style `base-nova`, **Base UI primitives** (`@base-ui/react`), not Radix. See "Base UI gotchas" below.
 - **Zustand** with `persist` middleware → `localStorage` for state
-- **next-themes** for light/dark
+- **next-themes** for light/dark/system
+- **Sonner** for toasts (shadcn `sonner` wrapper)
 - **pnpm** as the package manager
 - **Vercel** for deployment (Fluid Compute defaults; no custom infra)
-
-The previous prototype (`irregular_income_plan_with_balance_new_1.html`) is the visual + behavioral reference. Port its logic to components, but do not copy the inline CSS — use Tailwind + shadcn tokens instead.
 
 ## Project layout
 
 ```
 app/
-  layout.tsx          # ThemeProvider, font, metadata
-  page.tsx            # Main budget view (thin server component → client root)
-  globals.css         # Tailwind + shadcn CSS variables only
+  layout.tsx          # ThemeProvider, TooltipProvider, Toaster, Geist fonts, metadata
+  page.tsx            # Thin server component → <BudgetApp />
+  globals.css         # Tailwind + shadcn tokens + app tokens (income, expense, warning, pri-*)
 components/
-  ui/                 # shadcn primitives — added via CLI, never hand-edited
-  budget/             # Feature components (IncomeTable, BillsTable, TrialBalance, CashFlow, Summary)
+  ui/                 # shadcn primitives — added via CLI, edit in place if needed
+  theme-provider.tsx  # next-themes wrapper
+  theme-toggle.tsx    # Light / Dark / System dropdown
+  budget/
+    budget-app.tsx    # Client root — composes BalanceCard + Tabs + DataControls
+    balance-card.tsx  # Current balance input
+    income-table.tsx  # Income CRUD + metrics
+    bills-table.tsx   # Bills CRUD with HTML5 drag reorder + metrics
+    cash-flow.tsx     # Day-by-day timeline, balance bars, running totals
+    trial-balance.tsx # Running ledger with paid/received toggles
+    summary.tsx       # Coverage check + priority-sorted table
+    data-controls.tsx # Import / Export / Reset (AlertDialog)
+    metric.tsx        # Small stat card primitive
+    priority-dot.tsx  # Colored dot by Priority
 lib/
-  store.ts            # Zustand store + persist middleware (key: budget_v1)
-  format.ts           # fmt(), fd(), money + date helpers
-  types.ts            # Income, Bill, PaidState, Priority, Action unions
+  store.ts            # Zustand store + persist (key: budget_v1, version: 1)
+  types.ts            # Income, Bill, PaidState, Priority, BillAction + label maps
+  format.ts           # fmt(), fd(), uid()
+  seed.ts             # DEFAULT_INCOME, DEFAULT_BILLS seed data
+  use-mounted.ts      # useSyncExternalStore-based SSR-safe mount flag
+  utils.ts            # cn() from shadcn
 ```
 
-Keep feature components under `components/budget/`. Never put shadcn-modified components there — if a primitive needs changes, edit it in `components/ui/` directly (that is the shadcn pattern: you own the code).
+Keep feature code in `components/budget/`. Never put shadcn-modified primitives there — if a primitive needs changes, edit it in `components/ui/` directly (that is the shadcn pattern: you own the code).
 
 ## Hard constraints
 
 - **shadcn CLI, always.** Add primitives via `pnpm dlx shadcn@latest add <name>`. Never hand-write a Button, Dialog, Select, etc. If it exists in shadcn, install it.
 - **Tailwind only for styling.** No CSS modules, no styled-components, no inline `style={{}}` unless computing a dynamic value (e.g. a progress bar width). Use `cn()` from `lib/utils.ts` for conditional classes.
-- **Theme via CSS variables.** Colors come from `globals.css` tokens (`--background`, `--foreground`, `--primary`, `--destructive`, etc.). Don't hardcode hex values in components.
-- **Dark mode is automatic.** `next-themes` with `attribute="class"` + `defaultTheme="system"`. Every color must resolve through shadcn tokens so dark mode works for free.
+- **Theme via CSS variables.** Colors come from `globals.css` tokens — both shadcn tokens (`--background`, `--foreground`, `--primary`, `--destructive`, ...) and app tokens (`--income`, `--expense`, `--warning`, `--pri-crit`, `--pri-imp`, `--pri-opt`, `--pri-flex`). Don't hardcode hex values in components.
+- **Dark mode is automatic.** `next-themes` with `attribute="class"` + `defaultTheme="system"`. Every color must resolve through tokens so dark mode works for free. Add a `.dark` variant for every new token.
 - **TypeScript strict.** No `any` without a `// TODO:` note and a reason. Prefer `unknown` + narrowing.
-- **This is real financial data.** Never silently drop fields on schema changes. Zustand persist has a `version` and `migrate` — use them.
+- **This is real financial data.** Never silently drop fields on schema changes. Zustand `persist` has a `version` and `migrate` — use them.
+
+## Base UI gotchas (we use Base UI, not Radix)
+
+`shadcn@latest init -d` landed on style `base-nova` + `@base-ui/react`. The API differs from the Radix variant in a few places — these will bite you if you're pattern-matching from shadcn docs or training data:
+
+- **No `asChild`.** Base UI uses the `render` prop to replace the default element. Pass a JSX element, children flow through:
+  ```tsx
+  // ❌ Radix pattern — won't compile
+  <DropdownMenuTrigger asChild><Button>…</Button></DropdownMenuTrigger>
+
+  // ✅ Base UI pattern
+  <DropdownMenuTrigger render={<Button variant="ghost" />}>…</DropdownMenuTrigger>
+  ```
+  Same applies to `AlertDialogTrigger`, `DialogTrigger`, `TooltipTrigger`, etc.
+- **`TooltipProvider` uses `delay` (not `delayDuration`).**
+- **Trigger children render inside the outer element produced by `render`.** Put icons/text inside the trigger as children, not inside the rendered element.
+
+If a future task needs `asChild` ergonomics or AI Elements compatibility, switch the base with `pnpm dlx shadcn@latest init -d --base radix -f` and re-add every primitive. Do not mix base libraries.
+
+## React 19 strict-lint rules
+
+`eslint-config-next` for React 19 / Next 16 enforces these — violations are **errors**, not warnings. If you're porting code from older React, watch for:
+
+- **`react-hooks/set-state-in-effect`** — no `useEffect(() => setX(true), [])` mount pattern. Use `useMounted()` from `lib/use-mounted.ts` (built on `useSyncExternalStore`).
+- **`react-hooks/immutability`** — don't reassign a closure variable inside `.map()` / inside a component body after render starts. Use `.reduce()` with an accumulator instead. Running-total patterns especially.
+- **`react-hooks/refs`** — don't read `ref.current` during render. If a value affects rendering (e.g. drag-source id for styling), it must be `useState`, not `useRef`.
 
 ## Data model
 
@@ -55,11 +95,12 @@ interface BudgetState {
   income: Income[];
   bills: Bill[];
   paid: PaidState;
-  // actions: addIncome, updateIncome, removeIncome, addBill, ..., togglePaid, resetAll, importJson, exportJson
+  // actions: setBalance, addIncome/updateIncome/removeIncome, addBill/updateBill/removeBill,
+  // reorderBill, togglePaid, importData, resetAll, exportJson
 }
 ```
 
-IDs: use `crypto.randomUUID()`. Dates: ISO strings (`YYYY-MM-DD`). Money: plain `number` in dollars (not cents — legacy parity with the prototype; revisit only if rounding bugs appear).
+IDs: use `uid()` from `lib/format.ts` (wraps `crypto.randomUUID()`, falls back on non-browser envs). Dates: ISO strings (`YYYY-MM-DD`). Money: plain `number` in dollars (not cents — legacy parity with the prototype; revisit only if rounding bugs appear). Seed-data IDs use the `seed-*` prefix; never collide with those.
 
 ### Derived values
 
@@ -71,24 +112,25 @@ Bump `version` in the Zustand `persist` config and write a `migrate(persistedSta
 
 ## Conventions
 
-- Server Components by default. Add `"use client"` only when a component needs state, effects, or browser APIs (most of `components/budget/*` will be client).
+- Server Components by default. Add `"use client"` only when a component needs state, effects, or browser APIs (most of `components/budget/*` is client).
 - Function components with named exports. No default exports except for `page.tsx` / `layout.tsx` (Next.js requirement).
 - Imports: shadcn primitives from `@/components/ui/*`, feature code from `@/components/budget/*`, helpers from `@/lib/*`.
-- Money always rendered through `fmt()`; use `tabular-nums` (Tailwind `tabular-nums` utility) on money cells.
-- Icons via `lucide-react` (shadcn default). No emojis.
+- Money always rendered through `fmt()`; use Tailwind's `tabular-nums` on money cells.
+- Zustand selectors: subscribe narrowly (`useBudget((s) => s.bills)`) — never select the whole store, never pull actions via the same selector as state.
+- Icons via `lucide-react` at `h-4 w-4`. No emojis.
 - No comments unless explaining non-obvious *why*.
 
 ## Verification
 
 Before claiming a change is done:
 
-1. `pnpm typecheck` and `pnpm lint` clean.
-2. `pnpm dev` and exercise the golden path in a real browser: enter balance → add income → add bill → reorder bills → toggle paid → confirm Cash Flow + Summary + Trial Balance all update.
-3. Reload. State must survive.
-4. Toggle OS theme light↔dark. Every surface must have readable contrast — no hardcoded colors leaking through.
-5. Export JSON, reset, re-import. Lossless round-trip.
-6. `pnpm build` succeeds.
-7. If you cannot open a browser, say so explicitly. Never fake UI verification.
+1. `npx tsc --noEmit` and `pnpm lint` clean.
+2. `pnpm build` succeeds.
+3. `pnpm dev` and exercise the golden path in a real browser: enter balance → add income → add bill → reorder bills by drag → toggle paid in Trial Balance → confirm Cash Flow + Summary + Trial Balance all update.
+4. Reload. All state (balance, bill order, paid toggles, theme) must survive.
+5. Toggle theme light↔dark. Every surface must have readable contrast — no hardcoded colors leaking through.
+6. Export JSON, reset, re-import. Lossless round-trip.
+7. If you cannot open a browser, say so explicitly. Never fake UI verification. Playwright MCP tools are available — prefer them over curl-only smoke tests for any UI change.
 
 ## Agent usage
 
