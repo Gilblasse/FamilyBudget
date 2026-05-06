@@ -146,7 +146,7 @@ export function TrialBalance() {
         Running ledger — mark each item as paid when it clears.
       </p>
 
-      <div className="rounded-lg border">
+      <div className="hidden rounded-lg border md:block">
         <Table>
           <TableHeader>
             <TableRow>
@@ -170,6 +170,89 @@ export function TrialBalance() {
             ))}
           </TableBody>
         </Table>
+      </div>
+
+      <div className="space-y-4 md:hidden">
+        {sortedDates.map((date) => {
+          const rows = groupsByDate.get(date) ?? [];
+          const isOpeningOnly = rows.length > 0 && rows.every((r) => r.isOpening);
+          const label = isOpeningOnly && date === openingDate ? 'Opening' : fd(date);
+          return (
+            <div key={date} className="space-y-2">
+              <div className="rounded-md bg-muted/60 px-3 py-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                {label}
+              </div>
+              <div className="space-y-2">
+                {rows.map((r) => {
+                  const isInc = r.type === 'inc';
+                  return (
+                    <div
+                      key={r.key}
+                      className={cn(
+                        'space-y-2 rounded-lg border bg-card p-3',
+                        r.paid && 'opacity-70'
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <span className={cn('text-sm font-medium', r.paid && 'line-through')}>
+                          {r.label}
+                          {r.note && (
+                            <span className="ml-1 text-[10px] text-warning">({r.note})</span>
+                          )}
+                        </span>
+                        <span
+                          className={cn(
+                            'shrink-0 text-sm font-medium tabular-nums',
+                            isInc ? 'text-income' : 'text-expense',
+                            r.paid && 'line-through'
+                          )}
+                        >
+                          {isInc ? '+ ' : '− '}
+                          {fmt(r.amount)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">Balance</span>
+                        {r.paid ? (
+                          <span
+                            className={cn(
+                              'font-medium tabular-nums',
+                              r.balAfter >= 0 ? 'text-income' : 'text-expense'
+                            )}
+                          >
+                            {fmt(r.balAfter)}
+                          </span>
+                        ) : (
+                          <span className="tabular-nums text-muted-foreground">
+                            {fmt(r.projected)}*
+                          </span>
+                        )}
+                      </div>
+                      {r.isOpening ? (
+                        <div className="text-xs font-medium text-income">Opening</div>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant={r.paid ? 'default' : 'outline'}
+                          onClick={() => togglePaid(r.key)}
+                          className="h-10 w-full"
+                        >
+                          {r.paid
+                            ? isInc
+                              ? 'Received'
+                              : 'Paid'
+                            : isInc
+                            ? 'Mark received'
+                            : 'Mark paid'}
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
       </div>
       <p className="text-xs text-muted-foreground">
         * Muted balance = projected if this clears. Toggle items paid/received to update your

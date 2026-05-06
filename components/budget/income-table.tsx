@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { Trash2, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Table,
   TableBody,
@@ -56,7 +57,7 @@ export function IncomeTable() {
         <Metric label="Sources" value={String(scoped.length)} />
       </div>
 
-      <div className="rounded-lg border">
+      <div className="hidden rounded-lg border md:block">
         <Table>
           <TableHeader>
             <TableRow>
@@ -127,7 +128,73 @@ export function IncomeTable() {
         </Table>
       </div>
 
-      <Button variant="outline" size="sm" onClick={addIncome}>
+      <div className="space-y-3 md:hidden">
+        {scoped.map((r) => (
+          <div key={r.id} className="space-y-3 rounded-lg border bg-card p-3">
+            <div className="flex items-start gap-2">
+              <Input
+                value={r.source}
+                onChange={(e) => updateIncome(r.id, { source: e.target.value })}
+                placeholder="Source"
+                className="h-11 flex-1"
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={`Remove ${r.source}`}
+                onClick={() => removeIncome(r.id)}
+                className="h-11 w-11 shrink-0"
+              >
+                <Trash2 className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">Date</Label>
+                <Input
+                  type="date"
+                  value={r.date}
+                  onChange={(e) => updateIncome(r.id, { date: e.target.value })}
+                  className="h-11"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">Amount</Label>
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  value={r.amount}
+                  onChange={(e) =>
+                    updateIncome(r.id, { amount: parseFloat(e.target.value) || 0 })
+                  }
+                  className="h-11 tabular-nums"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground">Status</Label>
+              <Select
+                value={r.status}
+                onValueChange={(v) => updateIncome(r.id, { status: v as IncomeStatus })}
+              >
+                <SelectTrigger className="h-11 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(STATUS_LABEL) as IncomeStatus[]).map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {STATUS_LABEL[s]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <Button variant="outline" size="sm" onClick={addIncome} className="h-10 w-full sm:h-9 sm:w-auto">
         <Plus className="h-4 w-4" /> Add income
       </Button>
     </div>

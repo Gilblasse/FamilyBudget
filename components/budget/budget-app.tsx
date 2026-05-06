@@ -16,7 +16,7 @@ export function BudgetApp() {
   useBudgetSync();
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-6 px-4 py-6 sm:px-6 sm:py-8">
+    <div className="mx-auto w-full max-w-5xl space-y-6 px-3 py-4 sm:px-6 sm:py-8">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-lg font-medium">Irregular income plan</h1>
@@ -31,11 +31,20 @@ export function BudgetApp() {
       <BalanceCard />
 
       <Tabs defaultValue="income">
-        <TabsList className="flex-wrap">
-          <TabsTrigger value="income">Income sources</TabsTrigger>
+        <TabsList className="flex w-full flex-nowrap overflow-x-auto sm:w-auto sm:flex-wrap">
+          <TabsTrigger value="income">
+            <span className="sm:hidden">Income</span>
+            <span className="hidden sm:inline">Income sources</span>
+          </TabsTrigger>
           <TabsTrigger value="bills">Bills</TabsTrigger>
-          <TabsTrigger value="cashflow">Cash flow</TabsTrigger>
-          <TabsTrigger value="trialbal">Trial balance</TabsTrigger>
+          <TabsTrigger value="cashflow">
+            <span className="sm:hidden">Flow</span>
+            <span className="hidden sm:inline">Cash flow</span>
+          </TabsTrigger>
+          <TabsTrigger value="trialbal">
+            <span className="sm:hidden">Ledger</span>
+            <span className="hidden sm:inline">Trial balance</span>
+          </TabsTrigger>
           <TabsTrigger value="summary">Summary</TabsTrigger>
         </TabsList>
         <TabsContent value="income" className="mt-6">
@@ -56,7 +65,7 @@ export function BudgetApp() {
       </Tabs>
 
       <footer className="flex flex-wrap items-center justify-between gap-3 border-t pt-4 text-xs text-muted-foreground">
-        <span>Local-first · synced to Neon when signed in</span>
+        <span>Local-first · syncs to Google Sheets in production</span>
         <DataControls />
       </footer>
     </div>

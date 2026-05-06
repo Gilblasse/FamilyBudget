@@ -16,6 +16,9 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { useBudget } from '@/lib/store';
+import { AiChatSheet } from './ai/ai-chat-sheet';
+import { AiConfigNotice } from './ai/ai-config-notice';
+import { AiExtractDialog } from './ai/ai-extract-dialog';
 
 export function DataControls() {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -81,16 +84,22 @@ export function DataControls() {
         className="hidden"
         onChange={onFile}
       />
-      <Button variant="outline" size="sm" onClick={onImportPick}>
+      <Button variant="outline" size="sm" onClick={onImportPick} className="h-10 sm:h-9">
         <Upload className="h-4 w-4" /> Import
       </Button>
-      <Button variant="outline" size="sm" onClick={onExport}>
+      <Button variant="outline" size="sm" onClick={onExport} className="h-10 sm:h-9">
         <Download className="h-4 w-4" /> Export
       </Button>
+      <AiExtractDialog />
+      <AiChatSheet />
       <AlertDialog>
         <AlertDialogTrigger
           render={
-            <Button variant="outline" size="sm" className="text-expense hover:text-expense" />
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-10 text-expense hover:text-expense sm:h-9"
+            />
           }
         >
           <RotateCcw className="h-4 w-4" /> Reset to defaults
@@ -116,6 +125,7 @@ export function DataControls() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <AiConfigNotice />
     </div>
   );
 }

@@ -11,8 +11,8 @@ export function BalanceCard() {
 
   return (
     <Card>
-      <CardContent className="flex flex-wrap items-center gap-4 py-4">
-        <Label htmlFor="bank-balance" className="text-sm font-medium whitespace-nowrap">
+      <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+        <Label htmlFor="bank-balance" className="text-sm font-medium">
           Current bank balance
         </Label>
         <div className="flex items-center gap-2">
@@ -24,7 +24,7 @@ export function BalanceCard() {
             placeholder="0.00"
             value={balance === 0 ? '' : balance}
             onChange={(e) => setBalance(parseFloat(e.target.value) || 0)}
-            className="w-40 text-xl font-medium tabular-nums"
+            className="h-11 w-full text-xl font-medium tabular-nums sm:h-9 sm:w-40"
           />
         </div>
       </CardContent>

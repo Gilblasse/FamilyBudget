@@ -34,6 +34,10 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: 'invalid payload' }, { status: 400 });
   }
 
+  if (process.env.VERCEL_ENV !== 'production') {
+    return NextResponse.json({ updatedAt: null, skipped: true });
+  }
+
   const { base, token } = env();
   const res = await fetch(withToken(base, token), {
     method: 'POST',

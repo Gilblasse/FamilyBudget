@@ -13,6 +13,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Metric } from './metric';
 import { PriorityDot } from './priority-dot';
+import { AiAdvisorSheet } from './ai/ai-advisor-sheet';
 import { useBudget } from '@/lib/store';
 import { fmt, fd } from '@/lib/format';
 import { ACTION_LABEL, PRIORITY_ORDER } from '@/lib/types';
@@ -62,7 +63,7 @@ export function Summary() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         <Metric label="Bank balance" value={fmt(balance)} tone={balance > 0 ? 'income' : 'default'} />
         <Metric label="Total resources" value={fmt(totalInc)} tone="income" />
         <Metric label="Total bills" value={fmt(totalB)} />
@@ -71,8 +72,11 @@ export function Summary() {
       </div>
 
       <div className="space-y-2">
-        <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          Coverage check
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Coverage check
+          </div>
+          <AiAdvisorSheet />
         </div>
         {net < 0 ? (
           <Alert tone="risk" icon={AlertCircle}>
@@ -117,7 +121,7 @@ export function Summary() {
               <TableRow>
                 <TableHead className="w-[44%]">Name</TableHead>
                 <TableHead className="w-[18%] text-right">Amount</TableHead>
-                <TableHead className="w-[18%]">Due</TableHead>
+                <TableHead className="hidden w-[18%] sm:table-cell">Due</TableHead>
                 <TableHead className="w-[20%]">Action</TableHead>
               </TableRow>
             </TableHeader>
@@ -135,7 +139,7 @@ export function Summary() {
                       </span>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{fmt(r.amount)}</TableCell>
-                    <TableCell>{fd(r.date)}</TableCell>
+                    <TableCell className="hidden sm:table-cell">{fd(r.date)}</TableCell>
                     <TableCell>
                       <Badge variant={badgeVariant}>{ACTION_LABEL[r.action]}</Badge>
                     </TableCell>

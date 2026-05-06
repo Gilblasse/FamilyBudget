@@ -119,28 +119,36 @@ export function CashFlow() {
         />
       </div>
 
-      <div className="space-y-3">
-        <div className="flex items-center gap-3">
-          <span className="min-w-[110px] text-xs text-muted-foreground">
-            Income + balance
-          </span>
-          <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+      <div className="space-y-4 sm:space-y-3">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+          <div className="flex items-center justify-between gap-3 sm:contents">
+            <span className="text-xs text-muted-foreground sm:min-w-[110px]">
+              Income + balance
+            </span>
+            <span className="order-3 text-xs tabular-nums sm:min-w-[80px] sm:text-right">
+              {fmt(totalInc)}
+            </span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-muted sm:flex-1">
             <div
               className="h-full bg-income transition-all"
               style={{ width: `${incPct}%` }}
             />
           </div>
-          <span className="min-w-[80px] text-right text-xs tabular-nums">{fmt(totalInc)}</span>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="min-w-[110px] text-xs text-muted-foreground">Total bills</span>
-          <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+          <div className="flex items-center justify-between gap-3 sm:contents">
+            <span className="text-xs text-muted-foreground sm:min-w-[110px]">Total bills</span>
+            <span className="order-3 text-xs tabular-nums sm:min-w-[80px] sm:text-right">
+              {fmt(totalB)}
+            </span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-muted sm:flex-1">
             <div
               className="h-full bg-expense transition-all"
               style={{ width: `${billPct}%` }}
             />
           </div>
-          <span className="min-w-[80px] text-right text-xs tabular-nums">{fmt(totalB)}</span>
         </div>
       </div>
 

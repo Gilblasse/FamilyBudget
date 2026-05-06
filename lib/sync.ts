@@ -5,6 +5,7 @@ import { useBudget } from './store';
 import type { BudgetSnapshot } from './types';
 
 const DEBOUNCE_MS = 1500;
+const SYNC_WRITES = process.env.NEXT_PUBLIC_VERCEL_ENV === 'production';
 
 async function fetchRemote(): Promise<{ data: BudgetSnapshot | null; updatedAt: string | null }> {
   const res = await fetch('/api/budget', { cache: 'no-store' });
@@ -24,6 +25,7 @@ async function pushRemote(data: BudgetSnapshot): Promise<void> {
 export function useBudgetSync() {
   const hydrated = useRef(false);
   const pushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const warnedDisabled = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,6 +58,14 @@ export function useBudgetSync() {
         state.periods === prev.periods &&
         state.activePeriodId === prev.activePeriodId
       ) {
+        return;
+      }
+
+      if (!SYNC_WRITES) {
+        if (!warnedDisabled.current) {
+          warnedDisabled.current = true;
+          console.info('[sync] writes disabled — not a production deployment');
+        }
         return;
       }
 
