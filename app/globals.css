@@ -2,6 +2,20 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/*
+ * Semantic palette (brief vocabulary → existing token):
+ *   --primary    indigo  (CTAs, active states)           → --primary / --brand-* (unified)
+ *   --success    green   (paid / received / completed)   → --success-50/500/700
+ *   --critical   red     (overdue, destructive, crit)    → --danger-50/500/700
+ *   --warning    amber   (important, attention)          → --warning-50/500/700
+ *   --info       blue    (neutral informational)         → --info-50/500/700
+ *   --muted      gray    (counts, inactive chips)        → --neutral-100/700
+ *
+ * The brand mark and the primary action color are the same indigo so the
+ * sidebar logo, active pill, "Pay full" CTA, and focus ring all read as one.
+ * Green is reserved for completed states (Paid / Received / Success).
+ */
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -40,7 +54,7 @@
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
 
-  /* App semantic tokens */
+  /* App semantic tokens (legacy aliases for back-compat) */
   --color-income: var(--income);
   --color-income-soft: var(--income-soft);
   --color-expense: var(--expense);
@@ -52,6 +66,74 @@
   --color-pri-opt: var(--pri-opt);
   --color-pri-flex: var(--pri-flex);
 
+  /* Dashboard chart palette */
+  --color-chart-income: var(--chart-income);
+  --color-chart-expense: var(--chart-expense);
+  --color-chart-track: var(--chart-track);
+  --color-gauge-track: var(--gauge-track);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+
+  /* Brand ramp 50..900 */
+  --color-brand-50: var(--brand-50);
+  --color-brand-100: var(--brand-100);
+  --color-brand-200: var(--brand-200);
+  --color-brand-300: var(--brand-300);
+  --color-brand-400: var(--brand-400);
+  --color-brand-500: var(--brand-500);
+  --color-brand-600: var(--brand-600);
+  --color-brand-700: var(--brand-700);
+  --color-brand-800: var(--brand-800);
+  --color-brand-900: var(--brand-900);
+
+  /* Nav ramp — lime-green identity reserved for the sidebar.
+     Kept distinct from --brand-* (indigo, used for primary CTAs). */
+  --color-nav-50: var(--nav-50);
+  --color-nav-100: var(--nav-100);
+  --color-nav-500: var(--nav-500);
+  --color-nav-600: var(--nav-600);
+  --color-nav-700: var(--nav-700);
+  --color-nav-foreground: var(--nav-foreground);
+
+  /* Semantic ramps */
+  --color-success-50: var(--success-50);
+  --color-success-500: var(--success-500);
+  --color-success-700: var(--success-700);
+  --color-warning-50: var(--warning-50);
+  --color-warning-500: var(--warning-500);
+  --color-warning-700: var(--warning-700);
+  --color-danger-50: var(--danger-50);
+  --color-danger-500: var(--danger-500);
+  --color-danger-700: var(--danger-700);
+  --color-info-50: var(--info-50);
+  --color-info-500: var(--info-500);
+  --color-info-700: var(--info-700);
+
+  /* Neutrals */
+  --color-neutral-0: var(--neutral-0);
+  --color-neutral-50: var(--neutral-50);
+  --color-neutral-100: var(--neutral-100);
+  --color-neutral-200: var(--neutral-200);
+  --color-neutral-300: var(--neutral-300);
+  --color-neutral-400: var(--neutral-400);
+  --color-neutral-500: var(--neutral-500);
+  --color-neutral-600: var(--neutral-600);
+  --color-neutral-700: var(--neutral-700);
+  --color-neutral-800: var(--neutral-800);
+  --color-neutral-900: var(--neutral-900);
+  --color-neutral-950: var(--neutral-950);
+
+  /* Surfaces */
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-inverse: var(--surface-inverse);
+
+  /* Borders */
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+
+  /* Radius scale (existing shadcn-style) */
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -68,8 +150,8 @@
   --card-foreground: oklch(0.18 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.18 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
+  --primary: var(--brand-500);
+  --primary-foreground: oklch(0.99 0 0);
   --secondary: oklch(0.95 0.002 90);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.95 0.002 90);
@@ -80,22 +162,22 @@
   --border: oklch(0.9 0.003 90);
   --input: oklch(0.9 0.003 90);
   --ring: oklch(0.6 0 0);
-  --chart-1: oklch(0.55 0.15 145);
-  --chart-2: oklch(0.6 0.18 65);
-  --chart-3: oklch(0.55 0.22 27);
-  --chart-4: oklch(0.5 0.02 95);
+  --chart-1: oklch(0.42 0.08 175);
+  --chart-2: oklch(0.82 0.20 130);
+  --chart-3: oklch(0.62 0.15 60);
+  --chart-4: oklch(0.55 0.22 27);
   --chart-5: oklch(0.45 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.98 0.002 95);
+  --radius: 1rem;
+  --sidebar: oklch(0.985 0.002 95);
   --sidebar-foreground: oklch(0.18 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary: oklch(0.42 0.08 175);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.95 0.002 90);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.9 0.003 90);
+  --sidebar-accent: oklch(0.95 0.04 130);
+  --sidebar-accent-foreground: oklch(0.30 0.10 160);
+  --sidebar-border: oklch(0.92 0.003 90);
   --sidebar-ring: oklch(0.6 0 0);
 
-  /* App tokens — light */
+  /* App tokens — light (legacy aliases) */
   --income: oklch(0.48 0.16 142);
   --income-soft: oklch(0.92 0.06 140);
   --expense: oklch(0.52 0.2 27);
@@ -106,6 +188,86 @@
   --pri-imp: oklch(0.62 0.15 60);
   --pri-opt: oklch(0.6 0.18 140);
   --pri-flex: oklch(0.55 0.008 95);
+
+  /* Dashboard chart palette */
+  --chart-income: oklch(0.42 0.08 175);
+  --chart-expense: var(--danger-500);
+  --chart-track: oklch(0.95 0.005 250);
+  --gauge-track: oklch(0.94 0.003 90);
+  --brand: var(--brand-500);
+  --brand-foreground: oklch(0.99 0 0);
+
+  /* Brand / primary ramp — light (indigo, hue ~265) */
+  --brand-50:  oklch(0.96 0.03 265);
+  --brand-100: oklch(0.93 0.05 265);
+  --brand-200: oklch(0.88 0.08 265);
+  --brand-300: oklch(0.78 0.12 265);
+  --brand-400: oklch(0.66 0.16 265);
+  --brand-500: oklch(0.52 0.20 265);
+  --brand-600: oklch(0.44 0.18 265);
+  --brand-700: oklch(0.36 0.15 265);
+  --brand-800: oklch(0.28 0.12 265);
+  --brand-900: oklch(0.20 0.09 265);
+
+  /* Nav ramp — light (lime-green, hue ~130). Sidebar identity only. */
+  --nav-50:  oklch(0.97 0.04 130);
+  --nav-100: oklch(0.94 0.07 130);
+  --nav-500: oklch(0.78 0.20 130);
+  --nav-600: oklch(0.66 0.18 138);
+  --nav-700: oklch(0.52 0.14 142);
+  --nav-foreground: oklch(0.18 0 0);
+
+  /* Semantic ramps — light */
+  --success-50:  oklch(0.95 0.05 145);
+  --success-500: oklch(0.55 0.16 145);
+  --success-700: oklch(0.42 0.13 145);
+  --warning-50:  oklch(0.96 0.06 75);
+  --warning-500: oklch(0.72 0.17 70);
+  --warning-700: oklch(0.52 0.14 62);
+  --danger-50:   oklch(0.95 0.04 27);
+  --danger-500:  oklch(0.62 0.22 27);
+  --danger-700:  oklch(0.48 0.20 27);
+  --info-50:     oklch(0.95 0.03 235);
+  --info-500:    oklch(0.60 0.14 235);
+  --info-700:    oklch(0.45 0.12 235);
+
+  /* Neutrals — light slate */
+  --neutral-0:   oklch(1 0 0);
+  --neutral-50:  oklch(0.985 0.002 95);
+  --neutral-100: oklch(0.96 0.003 95);
+  --neutral-200: oklch(0.92 0.004 95);
+  --neutral-300: oklch(0.86 0.005 95);
+  --neutral-400: oklch(0.74 0.006 95);
+  --neutral-500: oklch(0.60 0.006 95);
+  --neutral-600: oklch(0.48 0.006 95);
+  --neutral-700: oklch(0.38 0.005 95);
+  --neutral-800: oklch(0.27 0.004 95);
+  --neutral-900: oklch(0.20 0.003 95);
+  --neutral-950: oklch(0.13 0.002 95);
+
+  /* Surfaces — light */
+  --surface-0: var(--background);
+  --surface-1: var(--card);
+  --surface-2: oklch(0.97 0.003 95);
+  --surface-inverse: oklch(0.20 0.003 95);
+
+  /* Borders — light */
+  --border-subtle: oklch(0.18 0 0 / 0.06);
+  --border-strong: oklch(0.18 0 0 / 0.12);
+
+  /* Shadows */
+  --shadow-xs: 0 1px 1px oklch(0.18 0 0 / 0.03);
+  --shadow-sm: 0 1px 2px oklch(0.18 0 0 / 0.04), 0 1px 3px oklch(0.18 0 0 / 0.06);
+  --shadow-md: 0 4px 8px oklch(0.18 0 0 / 0.06), 0 2px 4px oklch(0.18 0 0 / 0.04);
+  --shadow-lg: 0 12px 24px oklch(0.18 0 0 / 0.08), 0 4px 8px oklch(0.18 0 0 / 0.04);
+
+  /* Explicit radius scale */
+  --r-4: 0.25rem;
+  --r-8: 0.5rem;
+  --r-12: 0.75rem;
+  --r-16: 1rem;
+  --r-24: 1.5rem;
+  --r-full: 9999px;
 }
 
 .dark {
@@ -115,8 +277,8 @@
   --card-foreground: oklch(0.95 0.002 95);
   --popover: oklch(0.2 0 0);
   --popover-foreground: oklch(0.95 0.002 95);
-  --primary: oklch(0.92 0 0);
-  --primary-foreground: oklch(0.205 0 0);
+  --primary: var(--brand-500);
+  --primary-foreground: oklch(0.16 0 0);
   --secondary: oklch(0.26 0 0);
   --secondary-foreground: oklch(0.95 0.002 95);
   --muted: oklch(0.26 0 0);
@@ -127,21 +289,21 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.55 0 0);
-  --chart-1: oklch(0.78 0.16 140);
-  --chart-2: oklch(0.8 0.15 70);
-  --chart-3: oklch(0.75 0.17 22);
-  --chart-4: oklch(0.55 0.02 95);
+  --chart-1: oklch(0.58 0.10 175);
+  --chart-2: oklch(0.78 0.20 130);
+  --chart-3: oklch(0.78 0.15 70);
+  --chart-4: oklch(0.75 0.17 22);
   --chart-5: oklch(0.45 0 0);
-  --sidebar: oklch(0.2 0 0);
+  --sidebar: oklch(0.18 0 0);
   --sidebar-foreground: oklch(0.95 0.002 95);
-  --sidebar-primary: oklch(0.92 0 0);
-  --sidebar-primary-foreground: oklch(0.205 0 0);
-  --sidebar-accent: oklch(0.26 0 0);
-  --sidebar-accent-foreground: oklch(0.95 0.002 95);
-  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-primary: oklch(0.78 0.20 130);
+  --sidebar-primary-foreground: oklch(0.18 0 0);
+  --sidebar-accent: oklch(0.30 0.08 145);
+  --sidebar-accent-foreground: oklch(0.92 0.10 130);
+  --sidebar-border: oklch(1 0 0 / 8%);
   --sidebar-ring: oklch(0.55 0 0);
 
-  /* App tokens — dark */
+  /* App tokens — dark (legacy aliases) */
   --income: oklch(0.78 0.17 140);
   --income-soft: oklch(0.3 0.08 140);
   --expense: oklch(0.78 0.15 17);
@@ -152,6 +314,78 @@
   --pri-imp: oklch(0.72 0.15 62);
   --pri-opt: oklch(0.72 0.18 140);
   --pri-flex: oklch(0.6 0.01 95);
+
+  /* Dashboard chart palette — dark */
+  --chart-income: oklch(0.58 0.10 175);
+  --chart-expense: var(--danger-500);
+  --chart-track: oklch(0.24 0.02 250);
+  --gauge-track: oklch(0.26 0 0);
+  --brand: var(--brand-500);
+  --brand-foreground: oklch(0.16 0 0);
+
+  /* Brand / primary ramp — dark (indigo, hue ~265) */
+  --brand-50:  oklch(0.22 0.07 265);
+  --brand-100: oklch(0.28 0.10 265);
+  --brand-200: oklch(0.36 0.13 265);
+  --brand-300: oklch(0.46 0.17 265);
+  --brand-400: oklch(0.58 0.19 265);
+  --brand-500: oklch(0.70 0.18 265);
+  --brand-600: oklch(0.78 0.15 265);
+  --brand-700: oklch(0.86 0.12 265);
+  --brand-800: oklch(0.90 0.09 265);
+  --brand-900: oklch(0.94 0.06 265);
+
+  /* Nav ramp — dark (lime-green). Sidebar identity only. */
+  --nav-50:  oklch(0.22 0.06 140);
+  --nav-100: oklch(0.28 0.09 140);
+  --nav-500: oklch(0.78 0.20 130);
+  --nav-600: oklch(0.84 0.18 130);
+  --nav-700: oklch(0.88 0.14 130);
+  --nav-foreground: oklch(0.18 0 0);
+
+  /* Semantic ramps — dark */
+  --success-50:  oklch(0.28 0.08 145);
+  --success-500: oklch(0.78 0.17 140);
+  --success-700: oklch(0.88 0.14 140);
+  --warning-50:  oklch(0.30 0.08 65);
+  --warning-500: oklch(0.78 0.15 70);
+  --warning-700: oklch(0.88 0.13 70);
+  --danger-50:   oklch(0.32 0.10 22);
+  --danger-500:  oklch(0.78 0.15 17);
+  --danger-700:  oklch(0.88 0.13 17);
+  --info-50:     oklch(0.28 0.06 235);
+  --info-500:    oklch(0.74 0.13 235);
+  --info-700:    oklch(0.86 0.10 235);
+
+  /* Neutrals — dark */
+  --neutral-0:   oklch(0.13 0.002 95);
+  --neutral-50:  oklch(0.18 0.003 95);
+  --neutral-100: oklch(0.22 0.003 95);
+  --neutral-200: oklch(0.28 0.003 95);
+  --neutral-300: oklch(0.36 0.004 95);
+  --neutral-400: oklch(0.48 0.005 95);
+  --neutral-500: oklch(0.62 0.005 95);
+  --neutral-600: oklch(0.74 0.005 95);
+  --neutral-700: oklch(0.82 0.004 95);
+  --neutral-800: oklch(0.88 0.003 95);
+  --neutral-900: oklch(0.93 0.003 95);
+  --neutral-950: oklch(0.97 0.002 95);
+
+  /* Surfaces — dark */
+  --surface-0: var(--background);
+  --surface-1: var(--card);
+  --surface-2: oklch(0.24 0 0);
+  --surface-inverse: oklch(0.95 0.002 95);
+
+  /* Borders — dark */
+  --border-subtle: oklch(1 0 0 / 0.08);
+  --border-strong: oklch(1 0 0 / 0.14);
+
+  /* Shadows — dark */
+  --shadow-xs: 0 1px 1px oklch(0 0 0 / 0.20);
+  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.30), 0 1px 3px oklch(0 0 0 / 0.36);
+  --shadow-md: 0 4px 8px oklch(0 0 0 / 0.36), 0 2px 4px oklch(0 0 0 / 0.24);
+  --shadow-lg: 0 12px 24px oklch(0 0 0 / 0.42), 0 4px 8px oklch(0 0 0 / 0.28);
 }
 
 @layer base {
@@ -163,5 +397,76 @@
   }
   html {
     @apply font-sans;
+    font-feature-settings: "cv11", "ss01", "tnum";
+  }
+
+  /* Money / numeric — used for every dollar render */
+  .money {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  /* Focus-visible (Phase 10) */
+  *:focus-visible {
+    outline: 2px solid var(--brand-500);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Global polite transitions */
+  * {
+    transition-property: color, background-color, border-color, fill, stroke, opacity, box-shadow, transform;
+    transition-duration: 150ms;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0ms !important;
+      animation-duration: 0ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* Type ramp */
+  .t-display {
+    font-size: 2.25rem;
+    line-height: 2.5rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .t-h1 {
+    font-size: 1.75rem;
+    line-height: 2.125rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+  .t-h2 {
+    font-size: 1.25rem;
+    line-height: 1.75rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .t-body {
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: 500;
+  }
+  .t-small {
+    font-size: 0.8125rem;
+    line-height: 1.125rem;
+    font-weight: 500;
+  }
+  .t-caption {
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
 }
