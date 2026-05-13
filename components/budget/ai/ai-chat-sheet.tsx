@@ -1,12 +1,20 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, type KeyboardEvent } from 'react';
 import { useChat } from '@ai-sdk/react';
 import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
 } from 'ai';
-import { Check, Loader2, MessageSquare, Send, X } from 'lucide-react';
+import {
+  Check,
+  ClipboardPaste,
+  Loader2,
+  MessageSquare,
+  Send,
+  Wand2,
+  X,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,6 +39,17 @@ import {
 } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import type { BudgetToolName } from '@/lib/ai/tools';
+import { AdvisorPanel } from './advisor-panel';
+import { AiExtractPanel } from './ai-extract-panel';
+
+export type AssistantView = 'chat' | 'suggestions' | 'extract';
+
+interface AiChatSheetProps {
+  trigger?: React.ReactElement;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  initialView?: AssistantView;
+}
 
 type ToolPart = {
   type: `tool-${BudgetToolName}`;
@@ -42,18 +61,38 @@ type ToolPart = {
 };
 
 function getSnapshot() {
-  const { balance, income, bills, paid, periods, activePeriodId } = useBudget.getState();
-  return { balance, income, bills, paid, periods, activePeriodId };
+  const { balance, income, bills, paid, periods, activePeriodId, dateRange } =
+    useBudget.getState();
+  return { balance, income, bills, paid, periods, activePeriodId, dateRange };
 }
 
-export function AiChatSheet() {
+export function AiChatSheet(props: AiChatSheetProps = {}) {
   const status = useAIStatus();
   if (status !== 'enabled') return null;
-  return <AiChatSheetInner />;
+  return <AiChatSheetInner {...props} />;
 }
 
-function AiChatSheetInner() {
-  const [open, setOpen] = useState(false);
+function AiChatSheetInner({
+  trigger,
+  open: controlledOpen,
+  onOpenChange,
+  initialView = 'chat',
+}: AiChatSheetProps) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : uncontrolledOpen;
+  const setOpen = (next: boolean) => {
+    if (!isControlled) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
+
+  const [view, setView] = useState<AssistantView>(initialView);
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (prevOpen !== open) {
+    setPrevOpen(open);
+    if (open) setView(initialView);
+  }
+
   const [draft, setDraft] = useState('');
 
   const { messages, sendMessage, addToolOutput, status } = useChat({
@@ -190,95 +229,210 @@ function AiChatSheetInner() {
     setDraft('');
   }
 
+  const tabOrder: AssistantView[] = ['chat', 'suggestions', 'extract'];
+
+  function onTabKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft' && e.key !== 'Home' && e.key !== 'End') {
+      return;
+    }
+    e.preventDefault();
+    const current = tabOrder.indexOf(view);
+    let next = current;
+    if (e.key === 'ArrowRight') next = (current + 1) % tabOrder.length;
+    else if (e.key === 'ArrowLeft') next = (current - 1 + tabOrder.length) % tabOrder.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = tabOrder.length - 1;
+    setView(tabOrder[next]);
+    const id = `assistant-tab-${tabOrder[next]}`;
+    const el = document.getElementById(id);
+    if (el) el.focus();
+  }
+
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger render={<Button variant="outline" size="sm" className="h-10 sm:h-9" />}>
-        <MessageSquare className="h-4 w-4" /> Assistant
-      </SheetTrigger>
+      {trigger ? (
+        <SheetTrigger render={trigger} />
+      ) : !isControlled ? (
+        <SheetTrigger render={<Button variant="outline" size="sm" className="h-10 sm:h-9" />}>
+          <MessageSquare className="h-4 w-4" /> Assistant
+        </SheetTrigger>
+      ) : null}
       <SheetContent side="right" className="w-full p-0 sm:max-w-lg">
         <div className="flex h-full flex-col">
           <SheetHeader className="border-b">
-            <SheetTitle>Budget assistant</SheetTitle>
+            <SheetTitle>Assistant</SheetTitle>
             <SheetDescription>
-              Ask questions or propose changes. Every change requires your approval before it
-              takes effect. Budget data is sent to your AI provider via Vercel AI Gateway.
+              Chat to propose changes, browse read-only Suggestions, or paste text
+              to extract bills and income. Every change requires your approval
+              before it takes effect.
             </SheetDescription>
+            <div
+              role="tablist"
+              aria-label="Assistant view"
+              className="mt-2 inline-flex items-center gap-1 rounded-md bg-muted p-1 text-xs"
+            >
+              <button
+                type="button"
+                role="tab"
+                id="assistant-tab-chat"
+                aria-selected={view === 'chat'}
+                aria-controls="assistant-panel-chat"
+                tabIndex={view === 'chat' ? 0 : -1}
+                onClick={() => setView('chat')}
+                onKeyDown={onTabKeyDown}
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded px-2.5 py-1 font-medium transition-colors',
+                  view === 'chat'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                <MessageSquare className="h-3.5 w-3.5" /> Chat
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="assistant-tab-suggestions"
+                aria-selected={view === 'suggestions'}
+                aria-controls="assistant-panel-suggestions"
+                tabIndex={view === 'suggestions' ? 0 : -1}
+                onClick={() => setView('suggestions')}
+                onKeyDown={onTabKeyDown}
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded px-2.5 py-1 font-medium transition-colors',
+                  view === 'suggestions'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                <Wand2 className="h-3.5 w-3.5" /> Suggestions
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="assistant-tab-extract"
+                aria-selected={view === 'extract'}
+                aria-controls="assistant-panel-extract"
+                tabIndex={view === 'extract' ? 0 : -1}
+                onClick={() => setView('extract')}
+                onKeyDown={onTabKeyDown}
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded px-2.5 py-1 font-medium transition-colors',
+                  view === 'extract'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                <ClipboardPaste className="h-3.5 w-3.5" /> Extract from text
+              </button>
+            </div>
           </SheetHeader>
 
-          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 text-sm">
-            {messages.length === 0 && (
-              <div className="space-y-2 text-muted-foreground">
-                <p>Try asking:</p>
-                <ul className="list-inside list-disc space-y-0.5 text-xs">
-                  <li>What is my net position this period?</li>
-                  <li>Add a $50 gym bill due next Friday, mark it flexible.</li>
-                  <li>Which bills are due before my next paycheck?</li>
-                </ul>
-              </div>
-            )}
-
-            {messages.map((m) => (
-              <div key={m.id} className="space-y-2">
-                <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  {m.role === 'user' ? 'You' : 'Assistant'}
-                </div>
-                {m.parts.map((part, idx) => {
-                  if (part.type === 'text') {
-                    return (
-                      <div key={idx} className="whitespace-pre-wrap">
-                        {part.text}
-                      </div>
-                    );
-                  }
-                  if (part.type === 'reasoning') {
-                    return null;
-                  }
-                  if (part.type.startsWith('tool-')) {
-                    const tp = part as ToolPart;
-                    const toolName = tp.type.slice('tool-'.length) as BudgetToolName;
-                    return (
-                      <ToolCallCard
-                        key={tp.toolCallId}
-                        toolName={toolName}
-                        part={tp}
-                        describe={describeProposal}
-                        onApply={onApply}
-                        onDiscard={onDiscard}
-                      />
-                    );
-                  }
-                  return null;
-                })}
-              </div>
-            ))}
-
-            {(status === 'submitted' || status === 'streaming') && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" /> Thinking…
-              </div>
-            )}
-          </div>
-
-          <form
-            onSubmit={onSubmit}
-            className="flex items-center gap-2 border-t px-4 py-3"
-          >
-            <Input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="Ask or propose a change…"
-              autoComplete="off"
-              disabled={status === 'streaming' || status === 'submitted'}
-            />
-            <Button
-              type="submit"
-              size="icon"
-              aria-label="Send"
-              disabled={!draft.trim() || status === 'streaming' || status === 'submitted'}
+          {view === 'chat' && (
+            <div
+              role="tabpanel"
+              id="assistant-panel-chat"
+              aria-labelledby="assistant-tab-chat"
+              className="flex flex-1 flex-col overflow-hidden"
             >
-              <Send className="h-4 w-4" />
-            </Button>
-          </form>
+              <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 text-sm">
+                {messages.length === 0 && (
+                  <div className="space-y-2 text-muted-foreground">
+                    <p>Try asking:</p>
+                    <ul className="list-inside list-disc space-y-0.5 text-xs">
+                      <li>What is my net position this period?</li>
+                      <li>Add a $50 gym bill due next Friday, mark it flexible.</li>
+                      <li>Which bills are due before my next paycheck?</li>
+                    </ul>
+                  </div>
+                )}
+
+                {messages.map((m) => (
+                  <div key={m.id} className="space-y-2">
+                    <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                      {m.role === 'user' ? 'You' : 'Assistant'}
+                    </div>
+                    {m.parts.map((part, idx) => {
+                      if (part.type === 'text') {
+                        return (
+                          <div key={idx} className="whitespace-pre-wrap">
+                            {part.text}
+                          </div>
+                        );
+                      }
+                      if (part.type === 'reasoning') {
+                        return null;
+                      }
+                      if (part.type.startsWith('tool-')) {
+                        const tp = part as ToolPart;
+                        const toolName = tp.type.slice('tool-'.length) as BudgetToolName;
+                        return (
+                          <ToolCallCard
+                            key={tp.toolCallId}
+                            toolName={toolName}
+                            part={tp}
+                            describe={describeProposal}
+                            onApply={onApply}
+                            onDiscard={onDiscard}
+                          />
+                        );
+                      }
+                      return null;
+                    })}
+                  </div>
+                ))}
+
+                {(status === 'submitted' || status === 'streaming') && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Thinking…
+                  </div>
+                )}
+              </div>
+
+              <form
+                onSubmit={onSubmit}
+                className="flex items-center gap-2 border-t px-4 py-3"
+              >
+                <Input
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder="Ask or propose a change…"
+                  autoComplete="off"
+                  disabled={status === 'streaming' || status === 'submitted'}
+                />
+                <Button
+                  type="submit"
+                  size="icon"
+                  aria-label="Send"
+                  disabled={!draft.trim() || status === 'streaming' || status === 'submitted'}
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </form>
+            </div>
+          )}
+
+          {view === 'suggestions' && (
+            <div
+              role="tabpanel"
+              id="assistant-panel-suggestions"
+              aria-labelledby="assistant-tab-suggestions"
+              className="flex flex-1 flex-col overflow-hidden"
+            >
+              <AdvisorPanel />
+            </div>
+          )}
+
+          {view === 'extract' && (
+            <div
+              role="tabpanel"
+              id="assistant-panel-extract"
+              aria-labelledby="assistant-tab-extract"
+              className="flex-1 overflow-y-auto px-4 py-4"
+            >
+              <AiExtractPanel />
+            </div>
+          )}
         </div>
       </SheetContent>
     </Sheet>
