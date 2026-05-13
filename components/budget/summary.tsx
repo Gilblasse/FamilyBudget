@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo } from 'react';
-import { AlertCircle, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { AlertCircle, CheckCircle2, AlertTriangle, Wand2 } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -11,29 +11,54 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Metric } from './metric';
 import { PriorityDot } from './priority-dot';
-import { AiAdvisorSheet } from './ai/ai-advisor-sheet';
+import { useAILauncher } from './ai/ai-launcher-provider';
 import { useBudget } from '@/lib/store';
 import { fmt, fd } from '@/lib/format';
 import { ACTION_LABEL, PRIORITY_ORDER } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { useEffectiveDateRange } from '@/lib/use-effective-range';
+import { inRange } from '@/lib/filters';
 
 type AlertTone = 'ok' | 'warn' | 'risk';
 
 function Alert({ tone, icon: Icon, children }: { tone: AlertTone; icon: React.ElementType; children: React.ReactNode }) {
   const cls =
     tone === 'ok'
-      ? 'border-income bg-income-soft text-income'
+      ? 'border-success-500 bg-success-50 text-success-700'
       : tone === 'warn'
-      ? 'border-warning bg-warning-soft text-warning'
-      : 'border-expense bg-expense-soft text-expense';
+      ? 'border-warning-500 bg-warning-50 text-warning-700'
+      : 'border-danger-500 bg-danger-50 text-danger-700';
   return (
-    <div className={cn('flex items-start gap-2 rounded-md border-l-4 px-3 py-2 text-sm', cls)}>
-      <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+    <div className={cn('flex items-start gap-2 rounded-lg border-l-4 px-3 py-2 text-sm', cls)}>
+      <Icon className="mt-0.5 size-4 shrink-0" />
       <div>{children}</div>
     </div>
   );
+}
+
+function actionVariant(a: string): 'success' | 'warning' | 'danger' | 'neutral' {
+  if (a === 'pay-full') return 'success';
+  if (a === 'partial' || a === 'reduce') return 'warning';
+  if (a === 'skip' || a === 'delay') return 'danger';
+  return 'neutral';
+}
+
+type SortDir = 'asc' | 'desc' | 'none';
+type SortCol = 'name' | 'due';
+type SortState = { col: SortCol; dir: 'asc' | 'desc' } | null;
+
+function nextDir(current: SortState, col: SortCol): SortState {
+  if (!current || current.col !== col) return { col, dir: 'asc' };
+  if (current.dir === 'asc') return { col, dir: 'desc' };
+  return null;
+}
+
+function dirFor(state: SortState, col: SortCol): SortDir {
+  if (state && state.col === col) return state.dir;
+  return 'none';
 }
 
 export function Summary() {
@@ -41,10 +66,17 @@ export function Summary() {
   const income = useBudget((s) => s.income);
   const bills = useBudget((s) => s.bills);
   const activePeriodId = useBudget((s) => s.activePeriodId);
+  const range = useEffectiveDateRange();
+  const { status: aiStatus, openAssistant } = useAILauncher();
+  const [sort, setSort] = useState<SortState>(null);
 
   const { totalInc, totalB, critImp, net, pending, partial, sorted } = useMemo(() => {
-    const scopedIncome = income.filter((r) => r.periodId === activePeriodId);
-    const scopedBills = bills.filter((b) => b.periodId === activePeriodId);
+    const scopedIncome = income.filter(
+      (r) => r.periodId === activePeriodId && inRange(r.date, range),
+    );
+    const scopedBills = bills.filter(
+      (b) => b.periodId === activePeriodId && inRange(b.date, range),
+    );
     const totalInc = balance + scopedIncome.reduce((s, r) => s + r.amount, 0);
     const active = scopedBills.filter((b) => b.action !== 'skip' && b.action !== 'delay');
     const totalB = active.reduce((s, b) => s + b.amount, 0);
@@ -53,17 +85,35 @@ export function Summary() {
       .reduce((s, b) => s + b.amount, 0);
     const pending = scopedIncome.filter((r) => r.status === 'pending');
     const partial = scopedBills.filter((b) => b.action === 'partial');
-    const sorted = [...scopedBills].sort(
-      (a, b) =>
-        PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] ||
-        a.date.localeCompare(b.date)
-    );
+    let sorted: typeof scopedBills;
+    if (sort) {
+      const dir = sort.dir === 'asc' ? 1 : -1;
+      const copy = [...scopedBills];
+      if (sort.col === 'due') {
+        copy.sort((a, b) => a.date.localeCompare(b.date) * dir);
+      } else {
+        copy.sort(
+          (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) * dir,
+        );
+      }
+      sorted = copy;
+    } else {
+      sorted = [...scopedBills].sort(
+        (a, b) =>
+          PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] ||
+          a.date.localeCompare(b.date),
+      );
+    }
     return { totalInc, totalB, critImp, net: totalInc - totalB, pending, partial, sorted };
-  }, [balance, income, bills, activePeriodId]);
+  }, [balance, income, bills, activePeriodId, range, sort]);
+
+  function cycleSort(col: SortCol) {
+    setSort((s) => nextDir(s, col));
+  }
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <Metric label="Bank balance" value={fmt(balance)} tone={balance > 0 ? 'income' : 'default'} />
         <Metric label="Total resources" value={fmt(totalInc)} tone="income" />
         <Metric label="Total bills" value={fmt(totalB)} />
@@ -76,7 +126,17 @@ export function Summary() {
           <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Coverage check
           </div>
-          <AiAdvisorSheet />
+          {aiStatus === 'enabled' ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-10 sm:h-9"
+              onClick={() => openAssistant('suggestions')}
+            >
+              <Wand2 className="h-4 w-4" /> Get suggestions
+            </Button>
+          ) : null}
         </div>
         {net < 0 ? (
           <Alert tone="risk" icon={AlertCircle}>
@@ -112,36 +172,50 @@ export function Summary() {
       </div>
 
       <div>
-        <div className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           All bills by priority
         </div>
-        <div className="rounded-lg border">
+        <div className="overflow-hidden rounded-2xl border border-border-subtle bg-card">
           <Table>
-            <TableHeader>
+            <TableHeader sticky>
               <TableRow>
-                <TableHead className="w-[44%]">Name</TableHead>
+                <TableHead
+                  className="w-[44%]"
+                  sortable
+                  direction={dirFor(sort, 'name')}
+                  onSort={() => cycleSort('name')}
+                >
+                  Name
+                </TableHead>
                 <TableHead className="w-[18%] text-right">Amount</TableHead>
-                <TableHead className="hidden w-[18%] sm:table-cell">Due</TableHead>
+                <TableHead
+                  className="hidden w-[18%] sm:table-cell"
+                  sortable
+                  direction={dirFor(sort, 'due')}
+                  onSort={() => cycleSort('due')}
+                >
+                  Due
+                </TableHead>
                 <TableHead className="w-[20%]">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {sorted.map((r) => {
                 const skipped = r.action === 'skip' || r.action === 'delay';
-                const badgeVariant =
-                  r.action === 'pay-full' ? 'default' : skipped ? 'destructive' : 'secondary';
                 return (
-                  <TableRow key={r.id} className={cn(skipped && 'opacity-40')}>
+                  <TableRow key={r.id} className={cn(skipped && 'opacity-50')}>
                     <TableCell>
                       <span className="flex items-center gap-2">
                         <PriorityDot priority={r.priority} />
                         {r.name}
                       </span>
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{fmt(r.amount)}</TableCell>
+                    <TableCell className="text-right money">{fmt(r.amount)}</TableCell>
                     <TableCell className="hidden sm:table-cell">{fd(r.date)}</TableCell>
                     <TableCell>
-                      <Badge variant={badgeVariant}>{ACTION_LABEL[r.action]}</Badge>
+                      <Badge size="sm" variant={actionVariant(r.action)}>
+                        {ACTION_LABEL[r.action]}
+                      </Badge>
                     </TableCell>
                   </TableRow>
                 );

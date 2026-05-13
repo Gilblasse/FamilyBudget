@@ -1,12 +1,16 @@
 'use client';
 
 import { useMemo } from 'react';
+import { Inbox } from 'lucide-react';
 import { Metric } from './metric';
 import { PriorityDot } from './priority-dot';
+import { EmptyState } from '@/components/ui/empty-state';
 import { useBudget } from '@/lib/store';
 import { fmt, fd } from '@/lib/format';
 import { ACTION_LABEL, type Bill, type Income } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { useEffectiveDateRange } from '@/lib/use-effective-range';
+import { inRange } from '@/lib/filters';
 
 type IncEvent = {
   type: 'inc';
@@ -31,12 +35,17 @@ export function CashFlow() {
   const bills = useBudget((s) => s.bills);
   const activePeriodId = useBudget((s) => s.activePeriodId);
   const periods = useBudget((s) => s.periods);
+  const range = useEffectiveDateRange();
 
   const { totalInc, totalB, net, groups } = useMemo(() => {
-    const scopedIncome = income.filter((r) => r.periodId === activePeriodId);
-    const scopedBills = bills.filter((b) => b.periodId === activePeriodId);
+    const scopedIncome = income.filter(
+      (r) => r.periodId === activePeriodId && inRange(r.date, range),
+    );
+    const scopedBills = bills.filter(
+      (b) => b.periodId === activePeriodId && inRange(b.date, range),
+    );
     const activePeriod = periods.find((p) => p.id === activePeriodId);
-    const openingDate = activePeriod?.startDate ?? '2026-04-09';
+    const openingDate = range?.start ?? activePeriod?.startDate ?? '2026-04-09';
 
     const events: Event[] = [];
     if (balance > 0) {
@@ -96,7 +105,7 @@ export function CashFlow() {
       .filter((b) => b.action !== 'skip' && b.action !== 'delay')
       .reduce((s, b) => s + b.amount, 0);
     return { totalInc, totalB, net: totalInc - totalB, groups };
-  }, [balance, income, bills, activePeriodId, periods]);
+  }, [balance, income, bills, activePeriodId, periods, range]);
 
   const max = Math.max(totalInc, totalB, 1);
   const incPct = Math.round((totalInc / max) * 100);
@@ -104,7 +113,7 @@ export function CashFlow() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Metric
           label="Opening balance"
           value={fmt(balance)}
@@ -125,13 +134,13 @@ export function CashFlow() {
             <span className="text-xs text-muted-foreground sm:min-w-[110px]">
               Income + balance
             </span>
-            <span className="order-3 text-xs tabular-nums sm:min-w-[80px] sm:text-right">
+            <span className="order-3 text-xs money sm:min-w-[80px] sm:text-right">
               {fmt(totalInc)}
             </span>
           </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-muted sm:flex-1">
+          <div className="h-2 w-full overflow-hidden rounded-full bg-surface-2 sm:flex-1">
             <div
-              className="h-full bg-income transition-all"
+              className="h-full bg-success-500 transition-all"
               style={{ width: `${incPct}%` }}
             />
           </div>
@@ -139,13 +148,13 @@ export function CashFlow() {
         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
           <div className="flex items-center justify-between gap-3 sm:contents">
             <span className="text-xs text-muted-foreground sm:min-w-[110px]">Total bills</span>
-            <span className="order-3 text-xs tabular-nums sm:min-w-[80px] sm:text-right">
+            <span className="order-3 text-xs money sm:min-w-[80px] sm:text-right">
               {fmt(totalB)}
             </span>
           </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-muted sm:flex-1">
+          <div className="h-2 w-full overflow-hidden rounded-full bg-surface-2 sm:flex-1">
             <div
-              className="h-full bg-expense transition-all"
+              className="h-full bg-danger-500 transition-all"
               style={{ width: `${billPct}%` }}
             />
           </div>
@@ -153,13 +162,20 @@ export function CashFlow() {
       </div>
 
       <div>
-        <div className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Day-by-day timeline
         </div>
         {groups.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No events.</p>
+          <div className="rounded-2xl border border-border-subtle bg-card">
+            <EmptyState
+              icon={Inbox}
+              title="No events in this range"
+              description="Add income or bills, or widen the date filter, to see a timeline."
+              size="sm"
+            />
+          </div>
         ) : (
-          <div className="space-y-3">
+          <div className="max-h-[520px] space-y-3 overflow-y-auto rounded-2xl border border-border-subtle bg-card p-4">
             {groups.map(({ date, evs, running }) => (
               <div key={date} className="flex gap-3">
                 <div className="min-w-[56px] pt-0.5 text-xs font-medium text-muted-foreground">
@@ -167,18 +183,18 @@ export function CashFlow() {
                 </div>
                 <div
                   className={cn(
-                    'mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full',
-                    running >= 0 ? 'bg-income' : 'bg-expense'
+                    'mt-1.5 size-2.5 shrink-0 rounded-full',
+                    running >= 0 ? 'bg-success-500' : 'bg-danger-500'
                   )}
                 />
                 <div className="flex-1 space-y-1">
                   {evs
                     .filter((e): e is IncEvent => e.type === 'inc')
                     .map((e, i) => (
-                      <div key={`i-${i}`} className="text-sm font-medium text-income tabular-nums">
+                      <div key={`i-${i}`} className="text-sm font-medium text-success-700 money">
                         + {fmt(e.amount)} · {e.label}
                         {e.status === 'pending' && (
-                          <span className="ml-1 text-xs font-normal text-warning">
+                          <span className="ml-1 text-xs font-normal text-warning-700">
                             (pending)
                           </span>
                         )}
@@ -189,7 +205,7 @@ export function CashFlow() {
                     .map((e, i) => (
                       <div
                         key={`b-${i}`}
-                        className="flex items-center gap-2 text-sm text-expense tabular-nums"
+                        className="flex items-center gap-2 text-sm text-danger-700 money"
                       >
                         <PriorityDot priority={e.priority} />
                         <span>
@@ -204,8 +220,8 @@ export function CashFlow() {
                     ))}
                   <div
                     className={cn(
-                      'text-xs tabular-nums',
-                      running >= 0 ? 'text-income' : 'text-expense'
+                      'text-xs money',
+                      running >= 0 ? 'text-success-700' : 'text-danger-700'
                     )}
                   >
                     Running balance: {fmt(running)}

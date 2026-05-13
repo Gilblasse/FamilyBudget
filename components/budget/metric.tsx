@@ -4,9 +4,9 @@ type Tone = 'default' | 'income' | 'expense' | 'warning';
 
 const TONE: Record<Tone, string> = {
   default: 'text-foreground',
-  income: 'text-income',
-  expense: 'text-expense',
-  warning: 'text-warning',
+  income: 'text-success-700',
+  expense: 'text-danger-700',
+  warning: 'text-warning-700',
 };
 
 export function Metric({
@@ -19,11 +19,13 @@ export function Metric({
   tone?: Tone;
 }) {
   return (
-    <div className="rounded-lg bg-muted/60 px-3 py-2">
-      <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+    <div className="rounded-2xl border border-border-subtle bg-card px-4 py-3 shadow-[var(--shadow-xs)]">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
-      <div className={cn('text-xl font-medium tabular-nums', TONE[tone])}>{value}</div>
+      <div className={cn('mt-1 text-xl font-semibold money', TONE[tone])}>
+        {value}
+      </div>
     </div>
   );
 }

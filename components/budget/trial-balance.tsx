@@ -1,6 +1,9 @@
 'use client';
 
 import { useMemo } from 'react';
+import { Check } from 'lucide-react';
+import { toast } from 'sonner';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Table,
@@ -12,8 +15,10 @@ import {
 } from '@/components/ui/table';
 import { Metric } from './metric';
 import { useBudget } from '@/lib/store';
-import { fmt, fd } from '@/lib/format';
+import { fmt, fd, fdRange } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { useEffectiveDateRange } from '@/lib/use-effective-range';
+import { inRange } from '@/lib/filters';
 
 interface Entry {
   key: string;
@@ -34,12 +39,18 @@ export function TrialBalance() {
   const activePeriodId = useBudget((s) => s.activePeriodId);
   const periods = useBudget((s) => s.periods);
   const togglePaid = useBudget((s) => s.togglePaid);
+  const rawRange = useBudget((s) => s.dateRange);
+  const range = useEffectiveDateRange();
 
   const { totals, groupsByDate, openingDate } = useMemo(() => {
-    const scopedIncome = income.filter((r) => r.periodId === activePeriodId);
-    const scopedBills = bills.filter((b) => b.periodId === activePeriodId);
+    const scopedIncome = income.filter(
+      (r) => r.periodId === activePeriodId && inRange(r.date, range),
+    );
+    const scopedBills = bills.filter(
+      (b) => b.periodId === activePeriodId && inRange(b.date, range),
+    );
     const activePeriod = periods.find((p) => p.id === activePeriodId);
-    const openingDate = activePeriod?.startDate ?? '2026-04-09';
+    const openingDate = range?.start ?? activePeriod?.startDate ?? '2026-04-09';
 
     const list: Entry[] = [];
     if (balance > 0) {
@@ -125,13 +136,28 @@ export function TrialBalance() {
       groupsByDate,
       openingDate,
     };
-  }, [balance, income, bills, paid, activePeriodId, periods]);
+  }, [balance, income, bills, paid, activePeriodId, periods, range]);
 
   const sortedDates = [...groupsByDate.keys()].sort();
 
+  function handleToggle(key: string, label: string, type: 'inc' | 'exp', wasPaid: boolean) {
+    togglePaid(key);
+    const action = wasPaid
+      ? 'Reverted'
+      : type === 'inc'
+      ? 'Marked received'
+      : 'Marked paid';
+    toast.success(`${action} · ${label}`, {
+      action: {
+        label: 'Undo',
+        onClick: () => togglePaid(key),
+      },
+    });
+  }
+
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Metric
           label="Actual balance now"
           value={fmt(totals.actualNow)}
@@ -146,9 +172,15 @@ export function TrialBalance() {
         Running ledger — mark each item as paid when it clears.
       </p>
 
-      <div className="hidden rounded-lg border md:block">
+      {rawRange && range ? (
+        <div className="rounded-lg border border-info-500/30 bg-info-50 px-3 py-2 text-xs text-info-700">
+          <span className="font-medium">Filtered:</span> {fdRange(range.start, range.end)} — showing a slice of the period.
+        </div>
+      ) : null}
+
+      <div className="hidden overflow-hidden rounded-2xl border border-border-subtle bg-card md:block">
         <Table>
-          <TableHeader>
+          <TableHeader sticky>
             <TableRow>
               <TableHead className="w-[13%]">Date</TableHead>
               <TableHead className="w-[30%]">Description</TableHead>
@@ -165,7 +197,7 @@ export function TrialBalance() {
                 date={date}
                 openingDate={openingDate}
                 rows={groupsByDate.get(date) ?? []}
-                onToggle={togglePaid}
+                onToggle={handleToggle}
               />
             ))}
           </TableBody>
@@ -189,22 +221,24 @@ export function TrialBalance() {
                     <div
                       key={r.key}
                       className={cn(
-                        'space-y-2 rounded-lg border bg-card p-3',
-                        r.paid && 'opacity-70'
+                        'space-y-2 rounded-2xl border border-border-subtle bg-card p-3',
+                        r.paid && 'opacity-60'
                       )}
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <span className={cn('text-sm font-medium', r.paid && 'line-through')}>
+                        <span className="flex items-center gap-1.5 text-sm font-medium">
+                          {r.paid ? (
+                            <Check className="size-3.5 text-success-500" aria-hidden />
+                          ) : null}
                           {r.label}
                           {r.note && (
-                            <span className="ml-1 text-[10px] text-warning">({r.note})</span>
+                            <span className="ml-1 text-[10px] text-warning-700">({r.note})</span>
                           )}
                         </span>
                         <span
                           className={cn(
-                            'shrink-0 text-sm font-medium tabular-nums',
-                            isInc ? 'text-income' : 'text-expense',
-                            r.paid && 'line-through'
+                            'shrink-0 text-sm font-medium money',
+                            isInc ? 'text-success-700' : 'text-danger-700',
                           )}
                         >
                           {isInc ? '+ ' : '− '}
@@ -216,25 +250,25 @@ export function TrialBalance() {
                         {r.paid ? (
                           <span
                             className={cn(
-                              'font-medium tabular-nums',
-                              r.balAfter >= 0 ? 'text-income' : 'text-expense'
+                              'font-medium money',
+                              r.balAfter >= 0 ? 'text-success-700' : 'text-danger-700'
                             )}
                           >
                             {fmt(r.balAfter)}
                           </span>
                         ) : (
-                          <span className="tabular-nums text-muted-foreground">
+                          <span className="money text-muted-foreground">
                             {fmt(r.projected)}*
                           </span>
                         )}
                       </div>
                       {r.isOpening ? (
-                        <div className="text-xs font-medium text-income">Opening</div>
+                        <Badge size="sm" variant="success">Opening</Badge>
                       ) : (
                         <Button
                           size="sm"
-                          variant={r.paid ? 'default' : 'outline'}
-                          onClick={() => togglePaid(r.key)}
+                          variant="secondary"
+                          onClick={() => handleToggle(r.key, r.label, r.type, r.paid)}
                           className="h-10 w-full"
                         >
                           {r.paid
@@ -271,14 +305,14 @@ function RowGroup({
   date: string;
   openingDate: string;
   rows: (Entry & { balBefore: number; balAfter: number; projected: number })[];
-  onToggle: (key: string) => void;
+  onToggle: (key: string, label: string, type: 'inc' | 'exp', wasPaid: boolean) => void;
 }) {
   const isOpeningOnly = rows.length > 0 && rows.every((r) => r.isOpening);
   const label = isOpeningOnly && date === openingDate ? 'Opening' : fd(date);
   return (
     <>
-      <TableRow className="bg-muted/50 hover:bg-muted/50">
-        <TableCell colSpan={6} className="py-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+      <TableRow className="bg-surface-2 hover:bg-surface-2">
+        <TableCell colSpan={6} className="py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           {label}
         </TableCell>
       </TableRow>
@@ -288,29 +322,32 @@ function RowGroup({
           <TableRow key={r.key} className={cn(r.paid && 'opacity-60')}>
             <TableCell className="text-xs text-muted-foreground">{fd(r.date)}</TableCell>
             <TableCell className="text-sm">
-              <span className={cn(r.paid && 'line-through')}>{r.label}</span>
+              <span className="inline-flex items-center gap-1.5">
+                {r.paid ? (
+                  <Check className="size-3.5 text-success-500" aria-hidden />
+                ) : null}
+                {r.label}
+              </span>
               {r.note && (
-                <span className="ml-1 text-[10px] text-warning">({r.note})</span>
+                <span className="ml-1 text-[10px] text-warning-700">({r.note})</span>
               )}
             </TableCell>
-            <TableCell className="text-right tabular-nums">
+            <TableCell className="text-right money">
               {isInc && (
-                <span className={cn('font-medium text-income', r.paid && 'line-through')}>
-                  {fmt(r.amount)}
-                </span>
+                <span className="font-medium text-success-700">{fmt(r.amount)}</span>
               )}
             </TableCell>
-            <TableCell className="text-right tabular-nums">
+            <TableCell className="text-right money">
               {!isInc && (
-                <span className={cn('text-expense', r.paid && 'line-through')}>{fmt(r.amount)}</span>
+                <span className="text-danger-700">{fmt(r.amount)}</span>
               )}
             </TableCell>
-            <TableCell className="text-right tabular-nums">
+            <TableCell className="text-right money">
               {r.paid ? (
                 <span
                   className={cn(
                     'font-medium',
-                    r.balAfter >= 0 ? 'text-income' : 'text-expense'
+                    r.balAfter >= 0 ? 'text-success-700' : 'text-danger-700'
                   )}
                 >
                   {fmt(r.balAfter)}
@@ -321,15 +358,19 @@ function RowGroup({
             </TableCell>
             <TableCell>
               {r.isOpening ? (
-                <span className="text-xs font-medium text-income">Opening</span>
+                <Badge size="sm" variant="success">Opening</Badge>
+              ) : r.paid ? (
+                <Badge size="sm" variant="success">
+                  <Check className="size-3" /> {isInc ? 'Received' : 'Paid'}
+                </Badge>
               ) : (
                 <Button
                   size="sm"
-                  variant={r.paid ? 'default' : 'outline'}
-                  className="h-6 rounded-full px-3 text-[11px]"
-                  onClick={() => onToggle(r.key)}
+                  variant="secondary"
+                  className="h-7 rounded-full px-2.5 text-[11px]"
+                  onClick={() => onToggle(r.key, r.label, r.type, r.paid)}
                 >
-                  {r.paid ? (isInc ? 'Received' : 'Paid') : isInc ? 'Mark received' : 'Mark paid'}
+                  {isInc ? 'Mark received' : 'Mark paid'}
                 </Button>
               )}
             </TableCell>
