@@ -56,7 +56,8 @@ export function useBudgetSync() {
         state.bills === prev.bills &&
         state.paid === prev.paid &&
         state.periods === prev.periods &&
-        state.activePeriodId === prev.activePeriodId
+        state.activePeriodId === prev.activePeriodId &&
+        state.dateRange === prev.dateRange
       ) {
         return;
       }
@@ -71,10 +72,17 @@ export function useBudgetSync() {
 
       if (pushTimer.current) clearTimeout(pushTimer.current);
       pushTimer.current = setTimeout(() => {
-        const { balance, income, bills, paid, periods, activePeriodId } = useBudget.getState();
-        pushRemote({ balance, income, bills, paid, periods, activePeriodId }).catch((err) =>
-          console.warn('[sync] push failed, will retry on next change', err),
-        );
+        const { balance, income, bills, paid, periods, activePeriodId, dateRange } =
+          useBudget.getState();
+        pushRemote({
+          balance,
+          income,
+          bills,
+          paid,
+          periods,
+          activePeriodId,
+          dateRange,
+        }).catch((err) => console.warn('[sync] push failed, will retry on next change', err));
       }, DEBOUNCE_MS);
     });
 

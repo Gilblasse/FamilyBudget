@@ -1,8 +1,17 @@
-import type { Bill, BudgetPeriod, BudgetSnapshot, Income, PaidState } from '@/lib/types';
+import type {
+  Bill,
+  BudgetPeriod,
+  BudgetSnapshot,
+  DateRange,
+  Income,
+  PaidState,
+} from '@/lib/types';
+import { clampRangeToPeriod, inRange } from '@/lib/filters';
 
 export interface BudgetContext {
   balance: number;
   period: BudgetPeriod;
+  dateRange: DateRange;
   income: Income[];
   bills: Bill[];
   paid: PaidState;
@@ -17,8 +26,15 @@ export function buildBudgetContext(snapshot: BudgetSnapshot): BudgetContext | nu
   const period = snapshot.periods.find((p) => p.id === snapshot.activePeriodId);
   if (!period) return null;
 
-  const income = snapshot.income.filter((r) => r.periodId === period.id);
-  const bills = snapshot.bills.filter((b) => b.periodId === period.id);
+  const effectiveRange = clampRangeToPeriod(snapshot.dateRange ?? null, period);
+  if (!effectiveRange) return null;
+
+  const income = snapshot.income.filter(
+    (r) => r.periodId === period.id && inRange(r.date, effectiveRange),
+  );
+  const bills = snapshot.bills.filter(
+    (b) => b.periodId === period.id && inRange(b.date, effectiveRange),
+  );
 
   const billIds = new Set<string>([
     ...income.map((r) => `inc_${r.id}`),
@@ -38,6 +54,7 @@ export function buildBudgetContext(snapshot: BudgetSnapshot): BudgetContext | nu
   return {
     balance: snapshot.balance,
     period,
+    dateRange: effectiveRange,
     income,
     bills,
     paid,

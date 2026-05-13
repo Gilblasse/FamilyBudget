@@ -2,7 +2,7 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { Bill, BudgetPeriod, Income, PaidState } from './types';
+import type { Bill, BudgetPeriod, DateRange, Income, PaidState } from './types';
 import { DEFAULT_BILLS, DEFAULT_INCOME, DEFAULT_PERIOD_ID, DEFAULT_PERIODS } from './seed';
 import { uid } from './format';
 
@@ -13,6 +13,7 @@ interface BudgetData {
   paid: PaidState;
   periods: BudgetPeriod[];
   activePeriodId: string;
+  dateRange: DateRange | null;
 }
 
 interface BudgetActions {
@@ -34,6 +35,8 @@ interface BudgetActions {
   }) => string;
   setActivePeriod: (id: string) => void;
   removePeriod: (id: string) => void;
+  setDateRange: (range: DateRange | null) => void;
+  resetDateRange: () => void;
   importData: (data: Partial<BudgetData>) => void;
   resetAll: () => void;
   exportJson: () => string;
@@ -48,6 +51,7 @@ const initial: BudgetData = {
   paid: {},
   periods: DEFAULT_PERIODS,
   activePeriodId: DEFAULT_PERIOD_ID,
+  dateRange: null,
 };
 
 function defaultDateForPeriod(periods: BudgetPeriod[], activeId: string): string {
@@ -127,7 +131,7 @@ export const useBudget = create<BudgetState>()(
         set((s) => {
           const prev = s.periods.find((p) => p.id === s.activePeriodId);
           if (!prev) {
-            return { periods: [...s.periods, period], activePeriodId: id };
+            return { periods: [...s.periods, period], activePeriodId: id, dateRange: null };
           }
           const paidAdditions: PaidState = {};
           const copiedIncome = copyIncome
@@ -151,6 +155,7 @@ export const useBudget = create<BudgetState>()(
           return {
             periods: [...s.periods, period],
             activePeriodId: id,
+            dateRange: null,
             income: [...s.income, ...copiedIncome],
             bills: [...s.bills, ...copiedBills],
             paid:
@@ -162,7 +167,11 @@ export const useBudget = create<BudgetState>()(
         return id;
       },
       setActivePeriod: (id) =>
-        set((s) => (s.periods.some((p) => p.id === id) ? { activePeriodId: id } : {})),
+        set((s) =>
+          s.periods.some((p) => p.id === id) && s.activePeriodId !== id
+            ? { activePeriodId: id, dateRange: null }
+            : {},
+        ),
       removePeriod: (id) =>
         set((s) => {
           if (s.periods.length <= 1) return {};
@@ -178,16 +187,20 @@ export const useBudget = create<BudgetState>()(
           for (const [key, value] of Object.entries(s.paid)) {
             if (keptKeys.has(key)) nextPaid[key] = value;
           }
-          const nextActive =
-            s.activePeriodId === id ? remainingPeriods[0].id : s.activePeriodId;
+          const activeChanged = s.activePeriodId === id;
+          const nextActive = activeChanged ? remainingPeriods[0].id : s.activePeriodId;
           return {
             periods: remainingPeriods,
             income: remainingIncome,
             bills: remainingBills,
             paid: nextPaid,
             activePeriodId: nextActive,
+            dateRange: activeChanged ? null : s.dateRange,
           };
         }),
+
+      setDateRange: (range) => set({ dateRange: range }),
+      resetDateRange: () => set({ dateRange: null }),
 
       importData: (data) =>
         set((s) => {
@@ -211,19 +224,24 @@ export const useBudget = create<BudgetState>()(
             paid: data.paid ?? s.paid,
             periods: nextPeriods,
             activePeriodId: fallbackPeriodId,
+            dateRange: data.dateRange ?? null,
           };
         }),
 
       resetAll: () => set({ ...initial }),
 
       exportJson: () => {
-        const { balance, income, bills, paid, periods, activePeriodId } = get();
-        return JSON.stringify({ balance, income, bills, paid, periods, activePeriodId }, null, 2);
+        const { balance, income, bills, paid, periods, activePeriodId, dateRange } = get();
+        return JSON.stringify(
+          { balance, income, bills, paid, periods, activePeriodId, dateRange },
+          null,
+          2,
+        );
       },
     }),
     {
       name: 'budget_v1',
-      version: 2,
+      version: 3,
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
         balance: s.balance,
@@ -232,19 +250,23 @@ export const useBudget = create<BudgetState>()(
         paid: s.paid,
         periods: s.periods,
         activePeriodId: s.activePeriodId,
+        dateRange: s.dateRange,
       }),
       migrate: (raw, fromVersion) => {
-        const s = (raw ?? {}) as Partial<BudgetData>;
+        let s = (raw ?? {}) as Partial<BudgetData>;
         if (fromVersion < 2) {
           const id = DEFAULT_PERIOD_ID;
           const period: BudgetPeriod = { id, startDate: '2026-04-09', endDate: '2026-05-14' };
-          return {
+          s = {
             ...s,
             periods: s.periods ?? [period],
             activePeriodId: s.activePeriodId ?? id,
             income: (s.income ?? []).map((r) => ({ ...r, periodId: r.periodId ?? id })),
             bills: (s.bills ?? []).map((r) => ({ ...r, periodId: r.periodId ?? id })),
-          } as BudgetData;
+          };
+        }
+        if (fromVersion < 3) {
+          s = { ...s, dateRange: s.dateRange ?? null };
         }
         return s as BudgetData;
       },

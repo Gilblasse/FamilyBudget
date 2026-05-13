@@ -39,6 +39,29 @@ export function fdRange(start: string, end: string): string {
   return `${aMonth} ${a.day}, ${a.y} – ${bMonth} ${b.day}, ${b.y}`;
 }
 
+const TITLE_CASE_LOWERS = new Set([
+  'a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'in', 'nor',
+  'of', 'on', 'or', 'per', 'the', 'to', 'vs', 'via',
+]);
+
+export function toTitleCase(input: string): string {
+  if (!input) return input;
+  const parts = input.toLowerCase().split(/(\s+)/);
+  const wordIndices: number[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i].trim().length > 0) wordIndices.push(i);
+  }
+  const firstWord = wordIndices[0];
+  const lastWord = wordIndices[wordIndices.length - 1];
+  return parts
+    .map((part, i) => {
+      if (part.trim().length === 0) return part;
+      if (i !== firstWord && i !== lastWord && TITLE_CASE_LOWERS.has(part)) return part;
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join('');
+}
+
 export function uid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();

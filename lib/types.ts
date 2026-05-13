@@ -30,6 +30,11 @@ export interface Bill {
 
 export type PaidState = Record<string, boolean>;
 
+export interface DateRange {
+  start: string;
+  end: string;
+}
+
 export interface BudgetSnapshot {
   balance: number;
   income: Income[];
@@ -37,6 +42,7 @@ export interface BudgetSnapshot {
   paid: PaidState;
   periods: BudgetPeriod[];
   activePeriodId: string;
+  dateRange: DateRange | null;
 }
 
 export const PRIORITY_LABEL: Record<Priority, string> = {
