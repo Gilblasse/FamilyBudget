@@ -1,4 +1,15 @@
-import type { Bill, BudgetPeriod, Income } from './types';
+import type { Bill, BudgetMeta, BudgetPeriod, Income } from './types';
+
+export const DEFAULT_BUDGET_ID = 'budget-default';
+
+export const DEFAULT_BUDGETS: BudgetMeta[] = [
+  {
+    id: DEFAULT_BUDGET_ID,
+    name: 'My Budget',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    defaultRange: { start: '2026-04-09', end: '2026-05-14' },
+  },
+];
 
 export const DEFAULT_PERIOD_ID = 'seed-period-1';
 
@@ -28,7 +39,7 @@ export const DEFAULT_BILLS: Bill[] = [
   { id: 'seed-b12', periodId: DEFAULT_PERIOD_ID, name: 'Signature Loan', date: '2026-04-28', amount: 436.86, priority: 'imp', action: 'pay-full' },
   { id: 'seed-b13', periodId: DEFAULT_PERIOD_ID, name: 'Ivery Capital One', date: '2026-04-15', amount: 86.0, priority: 'imp', action: 'pay-full' },
   { id: 'seed-b14', periodId: DEFAULT_PERIOD_ID, name: 'Capital One Telly', date: '2026-04-09', amount: 239.18, priority: 'imp', action: 'partial' },
-  { id: 'seed-b15', periodId: DEFAULT_PERIOD_ID, name: 'Subscriptions (half)', date: '2026-04-15', amount: 314.36, priority: 'opt', action: 'reduce' },
+  { id: 'seed-b15', periodId: DEFAULT_PERIOD_ID, name: 'Subscriptions (half)', date: '2026-04-15', amount: 314.36, priority: 'opt', action: 'reduce', tags: ['subscription'] },
   { id: 'seed-b16', periodId: DEFAULT_PERIOD_ID, name: 'Groceries', date: '2026-04-14', amount: 600.0, priority: 'crit', action: 'pay-full' },
   { id: 'seed-b17', periodId: DEFAULT_PERIOD_ID, name: 'Groceries', date: '2026-04-28', amount: 600.0, priority: 'crit', action: 'pay-full' },
   { id: 'seed-b18', periodId: DEFAULT_PERIOD_ID, name: 'Gas & Oil', date: '2026-04-14', amount: 85.0, priority: 'crit', action: 'pay-full' },

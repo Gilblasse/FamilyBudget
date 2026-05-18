@@ -21,13 +21,10 @@ export function ExpenseOverviewCard() {
   const mounted = useMounted();
   const bills = useBudget((s) => s.bills);
   const paid = useBudget((s) => s.paid);
-  const activePeriodId = useBudget((s) => s.activePeriodId);
   const range = useEffectiveDateRange();
 
   const stats = useMemo(() => {
-    const scoped = bills.filter(
-      (b) => b.periodId === activePeriodId && inRange(b.date, range),
-    );
+    const scoped = bills.filter((b) => inRange(b.date, range));
     const total = scoped.reduce((s, b) => s + b.amount, 0);
     const paidTotal = scoped
       .filter((b) => paid[`bill_${b.id}`])
@@ -52,7 +49,7 @@ export function ExpenseOverviewCard() {
       unpaidCritTotal,
       critPaidTotal,
     };
-  }, [bills, paid, activePeriodId, range]);
+  }, [bills, paid, range]);
 
   const pct = Math.round(stats.paidPct * 100);
   const visibleUnpaid = stats.unpaidCrit.slice(0, TOOLTIP_MAX_ROWS);

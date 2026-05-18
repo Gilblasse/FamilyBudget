@@ -4,15 +4,30 @@ import type {
   BudgetSnapshot,
   DateRange,
   Income,
+  IncomeCadence,
+  IncomeOccurrence,
   PaidState,
 } from '@/lib/types';
-import { clampRangeToPeriod, inRange } from '@/lib/filters';
+import { inRange } from '@/lib/filters';
+import { expandAllIncome } from '@/lib/recurrence';
+
+export interface RecurringIncomeSource {
+  incomeId: string;
+  source: string;
+  cadence: IncomeCadence;
+  anchorDate: string;
+  amount: number;
+  secondDay?: number;
+  endDate?: string;
+}
 
 export interface BudgetContext {
   balance: number;
-  period: BudgetPeriod;
+  periods: BudgetPeriod[];
   dateRange: DateRange;
   income: Income[];
+  expandedIncome: IncomeOccurrence[];
+  recurringSources: RecurringIncomeSource[];
   bills: Bill[];
   paid: PaidState;
   totals: {
@@ -22,30 +37,50 @@ export interface BudgetContext {
   };
 }
 
-export function buildBudgetContext(snapshot: BudgetSnapshot): BudgetContext | null {
-  const period = snapshot.periods.find((p) => p.id === snapshot.activePeriodId);
-  if (!period) return null;
+function rangesOverlap(a: DateRange, b: DateRange): boolean {
+  return a.start <= b.end && b.start <= a.end;
+}
 
-  const effectiveRange = clampRangeToPeriod(snapshot.dateRange ?? null, period);
+export function buildBudgetContext(snapshot: BudgetSnapshot): BudgetContext | null {
+  let effectiveRange: DateRange | null = snapshot.dateRange ?? null;
+  if (!effectiveRange) {
+    const active = snapshot.periods.find((p) => p.id === snapshot.activePeriodId);
+    if (active) effectiveRange = { start: active.startDate, end: active.endDate };
+  }
   if (!effectiveRange) return null;
 
-  const income = snapshot.income.filter(
-    (r) => r.periodId === period.id && inRange(r.date, effectiveRange),
-  );
-  const bills = snapshot.bills.filter(
-    (b) => b.periodId === period.id && inRange(b.date, effectiveRange),
-  );
+  const periods = snapshot.periods
+    .filter((p) => rangesOverlap({ start: p.startDate, end: p.endDate }, effectiveRange))
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
-  const billIds = new Set<string>([
-    ...income.map((r) => `inc_${r.id}`),
+  const incomeTemplates = snapshot.income.filter(
+    (r) => (r.cadence ?? 'once') !== 'once' || inRange(r.date, effectiveRange),
+  );
+  const expandedIncome = expandAllIncome(snapshot.income, effectiveRange);
+  const bills = snapshot.bills.filter((b) => inRange(b.date, effectiveRange));
+
+  const recurringSources: RecurringIncomeSource[] = snapshot.income
+    .filter((r) => (r.cadence ?? 'once') !== 'once')
+    .map((r) => ({
+      incomeId: r.id,
+      source: r.source,
+      cadence: r.cadence ?? 'once',
+      anchorDate: r.date,
+      amount: r.amount,
+      secondDay: r.secondDay,
+      endDate: r.endDate,
+    }));
+
+  const allowedKeys = new Set<string>([
+    ...expandedIncome.map((o) => o.key),
     ...bills.map((b) => `bill_${b.id}`),
   ]);
   const paid: PaidState = {};
   for (const [k, v] of Object.entries(snapshot.paid)) {
-    if (billIds.has(k)) paid[k] = v;
+    if (allowedKeys.has(k)) paid[k] = v;
   }
 
-  const incomeTotal = income.reduce((s, r) => s + r.amount, 0);
+  const incomeTotal = expandedIncome.reduce((s, r) => s + r.amount, 0);
   const activeBillsTotal = bills
     .filter((b) => b.action !== 'skip' && b.action !== 'delay')
     .reduce((s, b) => s + b.amount, 0);
@@ -53,9 +88,11 @@ export function buildBudgetContext(snapshot: BudgetSnapshot): BudgetContext | nu
 
   return {
     balance: snapshot.balance,
-    period,
+    periods,
     dateRange: effectiveRange,
-    income,
+    income: incomeTemplates,
+    expandedIncome,
+    recurringSources,
     bills,
     paid,
     totals: { incomeTotal, activeBillsTotal, netPosition },

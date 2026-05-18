@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Metric } from './metric';
 import { PriorityDot } from './priority-dot';
+import { AiBoundary } from './ai/ai-boundary';
 import { useAILauncher } from './ai/ai-launcher-provider';
 import { useBudget } from '@/lib/store';
 import { fmt, fd } from '@/lib/format';
@@ -21,6 +22,10 @@ import { ACTION_LABEL, PRIORITY_ORDER } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
 import { inRange } from '@/lib/filters';
+import { expandAllIncome } from '@/lib/recurrence';
+import { endingBalance, isActiveBill, isImportantBill } from '@/lib/derived';
+import { actionVariant } from '@/lib/badges';
+import { applySort, dirFor, nextDir, type SortState } from '@/lib/sort';
 
 type AlertTone = 'ok' | 'warn' | 'risk';
 
@@ -39,73 +44,43 @@ function Alert({ tone, icon: Icon, children }: { tone: AlertTone; icon: React.El
   );
 }
 
-function actionVariant(a: string): 'success' | 'warning' | 'danger' | 'neutral' {
-  if (a === 'pay-full') return 'success';
-  if (a === 'partial' || a === 'reduce') return 'warning';
-  if (a === 'skip' || a === 'delay') return 'danger';
-  return 'neutral';
-}
-
-type SortDir = 'asc' | 'desc' | 'none';
 type SortCol = 'name' | 'due';
-type SortState = { col: SortCol; dir: 'asc' | 'desc' } | null;
-
-function nextDir(current: SortState, col: SortCol): SortState {
-  if (!current || current.col !== col) return { col, dir: 'asc' };
-  if (current.dir === 'asc') return { col, dir: 'desc' };
-  return null;
-}
-
-function dirFor(state: SortState, col: SortCol): SortDir {
-  if (state && state.col === col) return state.dir;
-  return 'none';
-}
 
 export function Summary() {
   const balance = useBudget((s) => s.balance);
   const income = useBudget((s) => s.income);
   const bills = useBudget((s) => s.bills);
-  const activePeriodId = useBudget((s) => s.activePeriodId);
   const range = useEffectiveDateRange();
-  const { status: aiStatus, openAssistant } = useAILauncher();
-  const [sort, setSort] = useState<SortState>(null);
+  const { openAssistant } = useAILauncher();
+  const [sort, setSort] = useState<SortState<SortCol>>(null);
 
   const { totalInc, totalB, critImp, net, pending, partial, sorted } = useMemo(() => {
-    const scopedIncome = income.filter(
-      (r) => r.periodId === activePeriodId && inRange(r.date, range),
-    );
-    const scopedBills = bills.filter(
-      (b) => b.periodId === activePeriodId && inRange(b.date, range),
-    );
-    const totalInc = balance + scopedIncome.reduce((s, r) => s + r.amount, 0);
-    const active = scopedBills.filter((b) => b.action !== 'skip' && b.action !== 'delay');
+    const scopedIncome = expandAllIncome(income, range);
+    const scopedBills = bills.filter((b) => inRange(b.date, range));
+    const totalInc = endingBalance({
+      openingBalance: balance,
+      scopedIncome,
+      scopedBills: [],
+    });
+    const active = scopedBills.filter(isActiveBill);
     const totalB = active.reduce((s, b) => s + b.amount, 0);
     const critImp = active
-      .filter((b) => b.priority === 'crit' || b.priority === 'imp')
+      .filter(isImportantBill)
       .reduce((s, b) => s + b.amount, 0);
     const pending = scopedIncome.filter((r) => r.status === 'pending');
     const partial = scopedBills.filter((b) => b.action === 'partial');
-    let sorted: typeof scopedBills;
-    if (sort) {
-      const dir = sort.dir === 'asc' ? 1 : -1;
-      const copy = [...scopedBills];
-      if (sort.col === 'due') {
-        copy.sort((a, b) => a.date.localeCompare(b.date) * dir);
-      } else {
-        copy.sort(
-          (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) * dir,
+    const sorted = sort
+      ? applySort(scopedBills, sort, {
+          name: (b) => b.name,
+          due: (b) => b.date,
+        })
+      : [...scopedBills].sort(
+          (a, b) =>
+            PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] ||
+            a.date.localeCompare(b.date),
         );
-      }
-      sorted = copy;
-    } else {
-      sorted = [...scopedBills].sort(
-        (a, b) =>
-          PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] ||
-          a.date.localeCompare(b.date),
-      );
-    }
     return { totalInc, totalB, critImp, net: totalInc - totalB, pending, partial, sorted };
-  }, [balance, income, bills, activePeriodId, range, sort]);
+  }, [balance, income, bills, range, sort]);
 
   function cycleSort(col: SortCol) {
     setSort((s) => nextDir(s, col));
@@ -126,7 +101,7 @@ export function Summary() {
           <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Coverage check
           </div>
-          {aiStatus === 'enabled' ? (
+          <AiBoundary>
             <Button
               type="button"
               variant="outline"
@@ -136,7 +111,7 @@ export function Summary() {
             >
               <Wand2 className="h-4 w-4" /> Get suggestions
             </Button>
-          ) : null}
+          </AiBoundary>
         </div>
         {net < 0 ? (
           <Alert tone="risk" icon={AlertCircle}>

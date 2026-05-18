@@ -14,6 +14,8 @@ import { fmt } from '@/lib/format';
 import { useMounted } from '@/lib/use-mounted';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
 import { inRange } from '@/lib/filters';
+import { expandAllIncome } from '@/lib/recurrence';
+import { isActiveBill, isReceivedIncome } from '@/lib/derived';
 import { OverviewCard, HeroAmount } from './overview-card';
 import {
   BalanceSparkActiveDot,
@@ -31,7 +33,6 @@ export function BalanceOverviewCard() {
   const setBalance = useBudget((s) => s.setBalance);
   const income = useBudget((s) => s.income);
   const bills = useBudget((s) => s.bills);
-  const paid = useBudget((s) => s.paid);
   const periods = useBudget((s) => s.periods);
   const activePeriodId = useBudget((s) => s.activePeriodId);
   const dateRange = useEffectiveDateRange();
@@ -48,18 +49,21 @@ export function BalanceOverviewCard() {
 
   const earnedLastTime = useMemo(() => {
     if (!previousPeriod) return null;
-    return income
-      .filter((r) => r.periodId === previousPeriod.id)
-      .filter((r) => r.status === 'received' || r.status === 'confirmed')
+    const periodIncome = income.filter((r) => r.periodId === previousPeriod.id);
+    const occurrences = expandAllIncome(periodIncome, {
+      start: previousPeriod.startDate,
+      end: previousPeriod.endDate,
+    });
+    return occurrences
+      .filter(isReceivedIncome)
       .reduce((sum, r) => sum + r.amount, 0);
   }, [income, previousPeriod]);
 
   const totalReceived = useMemo(() => {
-    return income
-      .filter((r) => r.periodId === activePeriodId && inRange(r.date, dateRange))
-      .filter((r) => r.status === 'received' || r.status === 'confirmed')
+    return expandAllIncome(income, dateRange)
+      .filter(isReceivedIncome)
       .reduce((sum, r) => sum + r.amount, 0);
-  }, [income, activePeriodId, dateRange]);
+  }, [income, dateRange]);
 
   const delta = useMemo(() => {
     if (earnedLastTime === null || earnedLastTime === 0) return null;
@@ -78,13 +82,14 @@ export function BalanceOverviewCard() {
       label: string;
       priority?: SparkPoint['priority'];
     };
-    const periodIncome: Event[] = income
-      .filter((r) => r.periodId === activePeriodId && inRange(r.date, dateRange))
-      .filter((r) => paid[`inc_${r.id}`])
-      .map((r) => ({ date: r.date, delta: r.amount, kind: 'income', label: r.source }));
+    const periodIncome: Event[] = expandAllIncome(income, dateRange).map((r) => ({
+      date: r.date,
+      delta: r.amount,
+      kind: 'income',
+      label: r.source,
+    }));
     const periodBills: Event[] = bills
-      .filter((b) => b.periodId === activePeriodId && inRange(b.date, dateRange))
-      .filter((b) => paid[`bill_${b.id}`])
+      .filter((b) => inRange(b.date, dateRange) && isActiveBill(b))
       .map((b) => ({
         date: b.date,
         delta: -b.amount,
@@ -119,7 +124,7 @@ export function BalanceOverviewCard() {
       });
     });
     return points;
-  }, [balance, income, bills, paid, activePeriodId, dateRange]);
+  }, [balance, income, bills, dateRange]);
 
   function startEditing() {
     setDraft(String(balance));

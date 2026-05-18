@@ -1,13 +1,19 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { useBudget } from './store';
+import { STORE_VERSION, useBudget } from './store';
+import { canWriteRemote, REMOTE_WRITE_DISABLED_REASON } from './remote-sync-policy';
 import type { BudgetSnapshot } from './types';
 
 const DEBOUNCE_MS = 1500;
-const SYNC_WRITES = process.env.NEXT_PUBLIC_VERCEL_ENV === 'production';
 
-async function fetchRemote(): Promise<{ data: BudgetSnapshot | null; updatedAt: string | null }> {
+interface RemoteEnvelope {
+  version: number | null;
+  data: BudgetSnapshot | null;
+  updatedAt: string | null;
+}
+
+async function fetchRemote(): Promise<RemoteEnvelope> {
   const res = await fetch('/api/budget', { cache: 'no-store' });
   if (!res.ok) throw new Error(`GET /api/budget → ${res.status}`);
   return res.json();
@@ -17,7 +23,7 @@ async function pushRemote(data: BudgetSnapshot): Promise<void> {
   const res = await fetch('/api/budget', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ data }),
+    body: JSON.stringify({ version: STORE_VERSION, data }),
   });
   if (!res.ok) throw new Error(`PUT /api/budget → ${res.status}`);
 }
@@ -34,7 +40,18 @@ export function useBudgetSync() {
       try {
         const remote = await fetchRemote();
         if (cancelled) return;
-        if (remote.data) useBudget.getState().importData(remote.data);
+        if (!remote.data) return;
+        // Skip the import when the remote envelope is from a newer client
+        // than we can read. A null version means legacy (pre-envelope) data —
+        // we trust it under the assumption that the only writer so far was
+        // this codebase at some prior version ≤ STORE_VERSION.
+        if (remote.version !== null && remote.version > STORE_VERSION) {
+          console.warn(
+            `[sync] remote envelope version ${remote.version} is newer than local ${STORE_VERSION}; staying on local state`,
+          );
+          return;
+        }
+        useBudget.getState().importData(remote.data);
       } catch (err) {
         console.warn('[sync] pull failed, staying on local state', err);
       } finally {
@@ -62,10 +79,10 @@ export function useBudgetSync() {
         return;
       }
 
-      if (!SYNC_WRITES) {
+      if (!canWriteRemote()) {
         if (!warnedDisabled.current) {
           warnedDisabled.current = true;
-          console.info('[sync] writes disabled — not a production deployment');
+          console.info(`[sync] ${REMOTE_WRITE_DISABLED_REASON}`);
         }
         return;
       }

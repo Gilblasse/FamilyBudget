@@ -4,15 +4,12 @@ import { useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { useAIStatus } from '@/lib/ai/enabled';
 import { useBudget } from '@/lib/store';
 import { ACTION_LABEL, PRIORITY_LABEL, type Bill } from '@/lib/types';
 import { classifyResponseSchema } from '@/lib/ai/schemas';
 
 export function AiSuggestButton({ bill, className }: { bill: Bill; className?: string }) {
   const [loading, setLoading] = useState(false);
-  const status = useAIStatus();
-  if (status !== 'enabled') return null;
 
   async function suggest() {
     if (!bill.name.trim()) {

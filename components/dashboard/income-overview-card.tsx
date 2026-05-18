@@ -1,15 +1,15 @@
 'use client';
 
 import { useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { Plus } from 'lucide-react';
-import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useBudget } from '@/lib/store';
 import { fmt } from '@/lib/format';
 import { useMounted } from '@/lib/use-mounted';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
-import { inRange } from '@/lib/filters';
+import { expandAllIncome } from '@/lib/recurrence';
 import { OverviewCard, HeroAmount } from './overview-card';
 import type { IncomeStatus } from '@/lib/types';
 
@@ -30,16 +30,16 @@ const STATUS_LABEL_SHORT: Record<IncomeStatus, string> = {
 const LEGEND_ORDER: IncomeStatus[] = ['received', 'confirmed', 'pending', 'expected'];
 
 export function IncomeOverviewCard() {
+  const router = useRouter();
   const mounted = useMounted();
   const income = useBudget((s) => s.income);
   const addIncome = useBudget((s) => s.addIncome);
-  const activePeriodId = useBudget((s) => s.activePeriodId);
+  const rawRange = useBudget((s) => s.dateRange);
+  const resetDateRange = useBudget((s) => s.resetDateRange);
   const range = useEffectiveDateRange();
 
   const totals = useMemo(() => {
-    const scoped = income.filter(
-      (r) => r.periodId === activePeriodId && inRange(r.date, range),
-    );
+    const scoped = expandAllIncome(income, range);
     const byStatus: Record<IncomeStatus, number> = {
       received: 0,
       confirmed: 0,
@@ -50,15 +50,14 @@ export function IncomeOverviewCard() {
     const total = LEGEND_ORDER.reduce((sum, key) => sum + byStatus[key], 0);
     const pendingCount = scoped.filter((r) => r.status === 'pending').length;
     return { byStatus, total, pendingCount };
-  }, [income, activePeriodId, range]);
+  }, [income, range]);
 
   const isEmpty = mounted && totals.total === 0;
+  const hiddenByFilter = isEmpty && rawRange !== null && income.length > 0;
 
   function handleLogIncome() {
     addIncome();
-    toast.success('Income source added', {
-      description: 'Edit it on the Income page.',
-    });
+    router.push('/income');
   }
 
   return (
@@ -70,13 +69,26 @@ export function IncomeOverviewCard() {
 
       {isEmpty ? (
         <div className="mt-4 hidden flex-wrap items-center gap-2 rounded-xl border border-dashed border-border-subtle bg-surface-2 px-3 py-2.5 md:flex">
-          <p className="text-xs text-muted-foreground">
-            All <span className="money font-medium text-foreground">$0.00</span> across
-            received, confirmed, pending, expected.
-          </p>
-          <Button size="sm" variant="secondary" onClick={handleLogIncome}>
-            <Plus className="size-3.5" /> Log income
-          </Button>
+          {hiddenByFilter ? (
+            <>
+              <p className="text-xs text-muted-foreground">
+                No income in the selected date range.
+              </p>
+              <Button size="sm" variant="secondary" onClick={() => resetDateRange()}>
+                Show full period
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-muted-foreground">
+                All <span className="money font-medium text-foreground">$0.00</span> in
+                the selected date range.
+              </p>
+              <Button size="sm" variant="secondary" onClick={handleLogIncome}>
+                <Plus className="size-3.5" /> Log income
+              </Button>
+            </>
+          )}
         </div>
       ) : (
         <div className="mt-4 hidden space-y-1.5 md:block">

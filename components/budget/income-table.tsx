@@ -26,77 +26,100 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Metric } from './metric';
+import { RangeStatus } from './range-status';
 import { useBudget } from '@/lib/store';
 import { fmt } from '@/lib/format';
-import { STATUS_LABEL, type Income, type IncomeStatus } from '@/lib/types';
+import {
+  CADENCE_LABEL,
+  STATUS_LABEL,
+  type Income,
+  type IncomeCadence,
+  type IncomeStatus,
+} from '@/lib/types';
 import { useUIStore } from '@/lib/ui-store';
+import { useEffectiveDateRange } from '@/lib/use-effective-range';
+import { expandAllIncome } from '@/lib/recurrence';
+import { visibleIncomeSources } from '@/lib/visibility';
+import { incomeStatusVariant } from '@/lib/badges';
+import { applySort, dirFor, nextDir, type SortState } from '@/lib/sort';
+import { isReceivedIncome } from '@/lib/derived';
 
-function statusVariant(s: IncomeStatus): 'success' | 'info' | 'warning' | 'neutral' {
-  if (s === 'received') return 'success';
-  if (s === 'confirmed') return 'info';
-  if (s === 'pending') return 'warning';
-  return 'neutral';
+const CADENCE_VALUES: IncomeCadence[] = [
+  'once',
+  'weekly',
+  'biweekly',
+  'semimonthly',
+  'monthly',
+];
+
+function applyCadenceChange(prev: Income, next: IncomeCadence): Partial<Income> {
+  const patch: Partial<Income> = { cadence: next };
+  if (next === 'semimonthly') {
+    if (prev.secondDay === undefined) patch.secondDay = 28;
+  } else {
+    patch.secondDay = undefined;
+  }
+  if (next === 'once') patch.endDate = undefined;
+  return patch;
 }
 
-type SortDir = 'asc' | 'desc' | 'none';
+function clampSecondDay(raw: string): number | undefined {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.min(31, Math.max(1, n));
+}
+
 type SortCol = 'source' | 'date';
-type SortState = { col: SortCol; dir: 'asc' | 'desc' } | null;
-
-function nextDir(current: SortState, col: SortCol): SortState {
-  if (!current || current.col !== col) return { col, dir: 'asc' };
-  if (current.dir === 'asc') return { col, dir: 'desc' };
-  return null;
-}
-
-function dirFor(state: SortState, col: SortCol): SortDir {
-  if (state && state.col === col) return state.dir;
-  return 'none';
-}
 
 export function IncomeTable() {
   const income = useBudget((s) => s.income);
   const balance = useBudget((s) => s.balance);
-  const activePeriodId = useBudget((s) => s.activePeriodId);
   const addIncome = useBudget((s) => s.addIncome);
   const updateIncome = useBudget((s) => s.updateIncome);
   const removeIncome = useBudget((s) => s.removeIncome);
   const searchQuery = useUIStore((s) => s.searchQuery);
   const clearSearchQuery = useUIStore((s) => s.clearSearchQuery);
+  const range = useEffectiveDateRange();
 
-  const [sort, setSort] = useState<SortState>(null);
+  const [sort, setSort] = useState<SortState<SortCol>>(null);
+  const [viewMode, setViewMode] = useState<'filtered' | 'all'>('filtered');
+  const effectiveRange = viewMode === 'all' ? null : range;
 
+  const sourcesInRange = useMemo(
+    () => visibleIncomeSources(income, range),
+    [income, range],
+  );
   const scoped = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return income
-      .filter((r) => r.periodId === activePeriodId)
-      .filter((r) => (q ? r.source.toLowerCase().includes(q) : true));
-  }, [income, activePeriodId, searchQuery]);
+    const visible = visibleIncomeSources(income, effectiveRange);
+    return q
+      ? visible.filter((r) => r.source.toLowerCase().includes(q))
+      : visible;
+  }, [income, effectiveRange, searchQuery]);
 
-  const displayed = useMemo(() => {
-    if (!sort) return scoped;
-    const dir = sort.dir === 'asc' ? 1 : -1;
-    const copy = [...scoped];
-    if (sort.col === 'date') {
-      copy.sort((a, b) => a.date.localeCompare(b.date) * dir);
-    } else {
-      copy.sort((a, b) => a.source.localeCompare(b.source, undefined, { sensitivity: 'base' }) * dir);
-    }
-    return copy;
-  }, [scoped, sort]);
+  const displayed = useMemo(
+    () =>
+      applySort(scoped, sort, {
+        source: (r) => r.source,
+        date: (r) => r.date,
+      }),
+    [scoped, sort],
+  );
 
   function cycleSort(col: SortCol) {
     setSort((s) => nextDir(s, col));
   }
 
   const { totalAll, totalConfirmed } = useMemo(() => {
+    const occurrences = expandAllIncome(scoped, effectiveRange);
     let all = balance;
     let conf = balance;
-    for (const r of scoped) {
+    for (const r of occurrences) {
       all += r.amount;
-      if (r.status === 'confirmed' || r.status === 'received') conf += r.amount;
+      if (isReceivedIncome(r)) conf += r.amount;
     }
     return { totalAll: all, totalConfirmed: conf };
-  }, [scoped, balance]);
+  }, [scoped, balance, effectiveRange]);
 
   function handleRemove(row: Income) {
     const snapshot: Income = { ...row };
@@ -105,14 +128,15 @@ export function IncomeTable() {
       action: {
         label: 'Undo',
         onClick: () => {
-          addIncome();
-          const created = useBudget.getState().income.at(-1);
-          if (!created) return;
-          updateIncome(created.id, {
+          const id = addIncome();
+          updateIncome(id, {
             source: snapshot.source,
             date: snapshot.date,
             amount: snapshot.amount,
             status: snapshot.status,
+            cadence: snapshot.cadence,
+            secondDay: snapshot.secondDay,
+            endDate: snapshot.endDate,
           });
         },
       },
@@ -132,6 +156,17 @@ export function IncomeTable() {
         <Metric label="Confirmed" value={fmt(totalConfirmed)} />
         <Metric label="Sources" value={String(scoped.length)} />
       </div>
+
+      <RangeStatus
+        range={range}
+        mode={viewMode}
+        shown={sourcesInRange.length}
+        total={income.length}
+        noun="source"
+        onToggle={() =>
+          setViewMode((m) => (m === 'filtered' ? 'all' : 'filtered'))
+        }
+      />
 
       {searchQuery ? (
         <div className="flex items-center gap-2">
@@ -154,7 +189,7 @@ export function IncomeTable() {
           <TableHeader sticky>
             <TableRow>
               <TableHead
-                className="w-[30%]"
+                className="w-[24%]"
                 sortable
                 direction={dirFor(sort, 'source')}
                 onSort={() => cycleSort('source')}
@@ -162,24 +197,25 @@ export function IncomeTable() {
                 Source
               </TableHead>
               <TableHead
-                className="w-[20%]"
+                className="w-[16%]"
                 sortable
                 direction={dirFor(sort, 'date')}
                 onSort={() => cycleSort('date')}
               >
                 Date
               </TableHead>
-              <TableHead className="w-[18%] text-right">Amount</TableHead>
-              <TableHead className="w-[22%]">Status</TableHead>
+              <TableHead className="w-[14%] text-right">Amount</TableHead>
+              <TableHead className="w-[18%]">Cadence</TableHead>
+              <TableHead className="w-[18%]">Status</TableHead>
               <TableHead className="w-[10%] text-right" aria-label="Row actions" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {scoped.length === 0 ? (
-              <TableEmpty colSpan={5}>
+              <TableEmpty colSpan={6}>
                 <EmptyState
                   icon={Inbox}
-                  title="No income in this period"
+                  title="No income in the selected date range"
                   description={searchQuery ? 'Try clearing the filter.' : 'Add your first income source.'}
                   cta={
                     !searchQuery ? (
@@ -219,6 +255,55 @@ export function IncomeTable() {
                     />
                   </TableCell>
                   <TableCell>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <Select
+                          value={r.cadence ?? 'once'}
+                          onValueChange={(v) =>
+                            updateIncome(r.id, applyCadenceChange(r, v as IncomeCadence))
+                          }
+                        >
+                          <SelectTrigger className="h-9 flex-1 border-transparent shadow-none hover:border-border-subtle focus:border-input">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {CADENCE_VALUES.map((c) => (
+                              <SelectItem key={c} value={c}>
+                                {CADENCE_LABEL[c]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {r.cadence === 'semimonthly' ? (
+                          <Input
+                            type="number"
+                            inputMode="numeric"
+                            min={1}
+                            max={31}
+                            value={r.secondDay ?? ''}
+                            onChange={(e) =>
+                              updateIncome(r.id, { secondDay: clampSecondDay(e.target.value) })
+                            }
+                            aria-label="Second day of month"
+                            className="h-9 w-14 tabular-nums"
+                          />
+                        ) : null}
+                      </div>
+                      {r.cadence && r.cadence !== 'once' ? (
+                        <Input
+                          type="date"
+                          value={r.endDate ?? ''}
+                          onChange={(e) =>
+                            updateIncome(r.id, { endDate: e.target.value || undefined })
+                          }
+                          aria-label="Ends on (optional)"
+                          placeholder="Ends"
+                          className="h-7 tabular-nums text-xs border-transparent shadow-none hover:border-border-subtle focus:border-input"
+                        />
+                      ) : null}
+                    </div>
+                  </TableCell>
+                  <TableCell>
                     <Select
                       value={r.status}
                       onValueChange={(v) => updateIncome(r.id, { status: v as IncomeStatus })}
@@ -230,7 +315,7 @@ export function IncomeTable() {
                         {(Object.keys(STATUS_LABEL) as IncomeStatus[]).map((s) => (
                           <SelectItem key={s} value={s}>
                             <span className="flex items-center gap-2">
-                              <Badge size="sm" variant={statusVariant(s)}>
+                              <Badge size="sm" variant={incomeStatusVariant(s)}>
                                 {STATUS_LABEL[s]}
                               </Badge>
                             </span>
@@ -261,7 +346,7 @@ export function IncomeTable() {
           <div className="rounded-2xl border border-border-subtle bg-card">
             <EmptyState
               icon={Inbox}
-              title="No income in this period"
+              title="No income in the selected date range"
               description="Add your first income source."
               cta={
                 <Button size="sm" onClick={handleAdd}>
@@ -313,6 +398,57 @@ export function IncomeTable() {
                   />
                 </div>
               </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">Cadence</Label>
+                  <Select
+                    value={r.cadence ?? 'once'}
+                    onValueChange={(v) =>
+                      updateIncome(r.id, applyCadenceChange(r, v as IncomeCadence))
+                    }
+                  >
+                    <SelectTrigger className="h-11 w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CADENCE_VALUES.map((c) => (
+                        <SelectItem key={c} value={c}>
+                          {CADENCE_LABEL[c]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {r.cadence === 'semimonthly' ? (
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">Second day</Label>
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={31}
+                      value={r.secondDay ?? ''}
+                      onChange={(e) =>
+                        updateIncome(r.id, { secondDay: clampSecondDay(e.target.value) })
+                      }
+                      className="h-11 tabular-nums"
+                    />
+                  </div>
+                ) : null}
+              </div>
+              {r.cadence && r.cadence !== 'once' ? (
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">Ends (optional)</Label>
+                  <Input
+                    type="date"
+                    value={r.endDate ?? ''}
+                    onChange={(e) =>
+                      updateIncome(r.id, { endDate: e.target.value || undefined })
+                    }
+                    className="h-11 tabular-nums"
+                  />
+                </div>
+              ) : null}
               <div className="space-y-1">
                 <Label className="text-[11px] text-muted-foreground">Status</Label>
                 <Select

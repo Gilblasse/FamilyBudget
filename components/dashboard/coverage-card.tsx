@@ -14,6 +14,8 @@ import { fmt } from '@/lib/format';
 import { useMounted } from '@/lib/use-mounted';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
 import { inRange } from '@/lib/filters';
+import { expandAllIncome } from '@/lib/recurrence';
+import { isReceivedIncome } from '@/lib/derived';
 import { cn } from '@/lib/utils';
 
 function pct(numer: number, denom: number): number {
@@ -57,27 +59,22 @@ export function CoverageCard() {
   const balance = useBudget((s) => s.balance);
   const income = useBudget((s) => s.income);
   const bills = useBudget((s) => s.bills);
-  const activePeriodId = useBudget((s) => s.activePeriodId);
   const range = useEffectiveDateRange();
 
   const stats = useMemo(() => {
-    const periodIncome = income.filter(
-      (r) => r.periodId === activePeriodId && inRange(r.date, range),
-    );
-    const periodBills = bills.filter(
-      (b) => b.periodId === activePeriodId && inRange(b.date, range),
-    );
-    const receivedIncome = periodIncome
-      .filter((r) => r.status === 'received' || r.status === 'confirmed')
+    const scopedIncome = expandAllIncome(income, range);
+    const scopedBills = bills.filter((b) => inRange(b.date, range));
+    const receivedIncome = scopedIncome
+      .filter(isReceivedIncome)
       .reduce((s, r) => s + r.amount, 0);
     const resources = balance + receivedIncome;
-    const critTotal = periodBills
+    const critTotal = scopedBills
       .filter((b) => b.priority === 'crit')
       .reduce((s, b) => s + b.amount, 0);
-    const impTotal = periodBills
+    const impTotal = scopedBills
       .filter((b) => b.priority === 'imp')
       .reduce((s, b) => s + b.amount, 0);
-    const allTotal = periodBills.reduce((s, b) => s + b.amount, 0);
+    const allTotal = scopedBills.reduce((s, b) => s + b.amount, 0);
     const critImpTotal = critTotal + impTotal;
 
     return {
@@ -89,7 +86,7 @@ export function CoverageCard() {
       coverageCritImp: pct(resources, critImpTotal),
       coverageAll: pct(resources, allTotal),
     };
-  }, [balance, income, bills, activePeriodId, range]);
+  }, [balance, income, bills, range]);
 
   const big = stats.coverageCritImp;
   const bucket = bucketFor(big);

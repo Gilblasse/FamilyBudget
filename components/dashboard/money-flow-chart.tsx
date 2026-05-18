@@ -20,7 +20,9 @@ import { useBudget } from '@/lib/store';
 import { useMounted } from '@/lib/use-mounted';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
 import { inRange } from '@/lib/filters';
+import { expandAllIncome } from '@/lib/recurrence';
 import { fmt } from '@/lib/format';
+import type { DateRange } from '@/lib/types';
 
 const config: ChartConfig = {
   income: {
@@ -51,17 +53,27 @@ export function MoneyFlowChart() {
     const sorted = [...periods].sort((a, b) => a.startDate.localeCompare(b.startDate));
     return sorted.map((p) => {
       const active = p.id === activePeriodId;
-      const periodIncome = income
-        .filter((r) => r.periodId === p.id && (!active || inRange(r.date, range)))
-        .reduce((s, r) => s + r.amount, 0);
-      const periodBills = bills
-        .filter((b) => b.periodId === p.id && (!active || inRange(b.date, range)))
+      // Per-period bar: clamp the user range to this period's window so each bar
+      // stays scoped to its own period. (Period-bound by chart design.)
+      const barRange: DateRange =
+        active && range
+          ? {
+              start: range.start > p.startDate ? range.start : p.startDate,
+              end: range.end < p.endDate ? range.end : p.endDate,
+            }
+          : { start: p.startDate, end: p.endDate };
+      const periodIncomeTotal = expandAllIncome(income, barRange).reduce(
+        (s, r) => s + r.amount,
+        0,
+      );
+      const periodBillsTotal = bills
+        .filter((b) => inRange(b.date, barRange))
         .reduce((s, b) => s + b.amount, 0);
       return {
         id: p.id,
         label: shortLabel(p.startDate),
-        income: periodIncome,
-        expense: periodBills,
+        income: periodIncomeTotal,
+        expense: periodBillsTotal,
         active,
       };
     });

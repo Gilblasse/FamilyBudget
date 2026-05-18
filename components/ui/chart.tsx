@@ -12,6 +12,30 @@ const THEMES = { light: "", dark: ".dark" } as const
 const INITIAL_DIMENSION = { width: 320, height: 200 } as const
 type TooltipNameType = number | string
 
+// Recharts' ResponsiveContainer logs a "width(0) and height(0)" warning when its
+// ResizeObserver briefly reports 0×0 during hydration on narrow viewports. The
+// charts still render correctly once the parent measures. Filter the specific
+// message so the dev console stays useful.
+if (typeof window !== "undefined") {
+  const w = window as typeof window & { __chartWarnFilterInstalled?: boolean }
+  if (!w.__chartWarnFilterInstalled) {
+    w.__chartWarnFilterInstalled = true
+    const origWarn = console.warn
+    console.warn = (...args: unknown[]) => {
+      const first = args[0]
+      if (
+        typeof first === "string" &&
+        first.includes("width(") &&
+        first.includes("height(") &&
+        first.includes("should be greater than 0")
+      ) {
+        return
+      }
+      origWarn.apply(console, args)
+    }
+  }
+}
+
 export type ChartConfig = Record<
   string,
   {
@@ -65,7 +89,7 @@ function ChartContainer({
         data-slot="chart"
         data-chart={chartId}
         className={cn(
-          "flex aspect-video justify-center text-xs [&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground [&_.recharts-cartesian-grid_line[stroke='#ccc']]:stroke-border/50 [&_.recharts-curve.recharts-tooltip-cursor]:stroke-border [&_.recharts-dot[stroke='#fff']]:stroke-transparent [&_.recharts-layer]:outline-hidden [&_.recharts-polar-grid_[stroke='#ccc']]:stroke-border [&_.recharts-radial-bar-background-sector]:fill-muted [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-muted [&_.recharts-reference-line_[stroke='#ccc']]:stroke-border [&_.recharts-sector]:outline-hidden [&_.recharts-sector[stroke='#fff']]:stroke-transparent [&_.recharts-surface]:outline-hidden",
+          "flex aspect-video min-h-px min-w-px justify-center text-xs [&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground [&_.recharts-cartesian-grid_line[stroke='#ccc']]:stroke-border/50 [&_.recharts-curve.recharts-tooltip-cursor]:stroke-border [&_.recharts-dot[stroke='#fff']]:stroke-transparent [&_.recharts-layer]:outline-hidden [&_.recharts-polar-grid_[stroke='#ccc']]:stroke-border [&_.recharts-radial-bar-background-sector]:fill-muted [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-muted [&_.recharts-reference-line_[stroke='#ccc']]:stroke-border [&_.recharts-sector]:outline-hidden [&_.recharts-sector[stroke='#fff']]:stroke-transparent [&_.recharts-surface]:outline-hidden",
           className
         )}
         {...props}

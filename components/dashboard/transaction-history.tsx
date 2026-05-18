@@ -43,12 +43,14 @@ import { useMounted } from '@/lib/use-mounted';
 import { fmt, fd, toTitleCase } from '@/lib/format';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
 import { inRange } from '@/lib/filters';
+import { expandAllIncome } from '@/lib/recurrence';
 import { STATUS_LABEL } from '@/lib/types';
-import type { Bill, Income, IncomeStatus } from '@/lib/types';
+import type { Bill, IncomeOccurrence } from '@/lib/types';
+import { incomeStatusVariant } from '@/lib/badges';
 import { SeverityTag } from '@/components/budget/severity-tag';
 
 type TxRow =
-  | { kind: 'income'; row: Income; paidKey: string }
+  | { kind: 'income'; row: IncomeOccurrence; paidKey: string }
   | { kind: 'bill'; row: Bill; paidKey: string };
 
 const ROW_LIMIT = 50;
@@ -59,20 +61,12 @@ const TX_FILTER_LABEL: Record<TxTypeFilter, string> = {
   bills: 'Bills only',
 };
 
-function incomeStatusVariant(s: IncomeStatus): 'success' | 'info' | 'warning' | 'neutral' {
-  if (s === 'received') return 'success';
-  if (s === 'confirmed') return 'info';
-  if (s === 'pending') return 'warning';
-  return 'neutral';
-}
-
 export function TransactionHistory() {
   const mounted = useMounted();
   const income = useBudget((s) => s.income);
   const bills = useBudget((s) => s.bills);
   const paid = useBudget((s) => s.paid);
   const togglePaid = useBudget((s) => s.togglePaid);
-  const activePeriodId = useBudget((s) => s.activePeriodId);
   const searchQuery = useUIStore((s) => s.searchQuery);
   const clearSearchQuery = useUIStore((s) => s.clearSearchQuery);
   const txTypeFilter = useUIStore((s) => s.txTypeFilter);
@@ -83,7 +77,7 @@ export function TransactionHistory() {
 
   const rows = useMemo<TxRow[]>(() => {
     const q = searchQuery.trim().toLowerCase();
-    const matchesIncome = (r: Income) =>
+    const matchesIncomeOccurrence = (r: IncomeOccurrence) =>
       q ? r.source.toLowerCase().includes(q) : true;
     const matchesBill = (b: Bill) =>
       q ? b.name.toLowerCase().includes(q) : true;
@@ -91,29 +85,19 @@ export function TransactionHistory() {
     const inc: TxRow[] =
       txTypeFilter === 'bills'
         ? []
-        : income
-            .filter(
-              (r) =>
-                r.periodId === activePeriodId &&
-                inRange(r.date, range) &&
-                matchesIncome(r),
-            )
-            .map((r) => ({ kind: 'income' as const, row: r, paidKey: `inc_${r.id}` }));
+        : expandAllIncome(income, range)
+            .filter(matchesIncomeOccurrence)
+            .map((r) => ({ kind: 'income' as const, row: r, paidKey: r.key }));
     const bil: TxRow[] =
       txTypeFilter === 'income'
         ? []
         : bills
-            .filter(
-              (b) =>
-                b.periodId === activePeriodId &&
-                inRange(b.date, range) &&
-                matchesBill(b),
-            )
+            .filter((b) => inRange(b.date, range) && matchesBill(b))
             .map((b) => ({ kind: 'bill' as const, row: b, paidKey: `bill_${b.id}` }));
     const all = [...inc, ...bil];
     all.sort((a, b) => a.row.date.localeCompare(b.row.date));
     return all.slice(0, ROW_LIMIT);
-  }, [income, bills, activePeriodId, searchQuery, range, txTypeFilter]);
+  }, [income, bills, searchQuery, range, txTypeFilter]);
 
   const colSpan =
     2 +

@@ -2,11 +2,27 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { Bill, BudgetPeriod, DateRange, Income, PaidState } from './types';
-import { DEFAULT_BILLS, DEFAULT_INCOME, DEFAULT_PERIOD_ID, DEFAULT_PERIODS } from './seed';
+import type { Bill, BudgetMeta, BudgetPeriod, DateRange, Income, PaidState } from './types';
+import {
+  DEFAULT_BILLS,
+  DEFAULT_BUDGETS,
+  DEFAULT_BUDGET_ID,
+  DEFAULT_INCOME,
+  DEFAULT_PERIOD_ID,
+  DEFAULT_PERIODS,
+} from './seed';
+import { addDaysIso, todayIso } from './date-utils';
+import { dedupeBills, dedupeIncome } from './dedupe';
 import { uid } from './format';
 
-interface BudgetData {
+/**
+ * Persisted store schema version. Bump when adding a migration branch.
+ * Shared with `lib/sync.ts` so the remote envelope carries the same
+ * version, and Apps Script can reject stale writes from older clients.
+ */
+export const STORE_VERSION = 8;
+
+export interface BudgetData {
   balance: number;
   income: Income[];
   bills: Bill[];
@@ -16,14 +32,21 @@ interface BudgetData {
   dateRange: DateRange | null;
 }
 
+export interface MultiBudgetSlice {
+  budgets: BudgetMeta[];
+  activeBudgetId: string;
+  budgetData: Record<string, BudgetData>;
+}
+
 interface BudgetActions {
   setBalance: (v: number) => void;
-  addIncome: () => void;
+  addIncome: () => string;
   updateIncome: (id: string, patch: Partial<Income>) => void;
   removeIncome: (id: string) => void;
-  addBill: () => void;
+  addBill: () => string;
   updateBill: (id: string, patch: Partial<Bill>) => void;
   removeBill: (id: string) => void;
+  dedupeAll: () => void;
   reorderBill: (fromId: string, toId: string) => void;
   togglePaid: (key: string) => void;
   addPeriod: (input: {
@@ -40,23 +63,171 @@ interface BudgetActions {
   importData: (data: Partial<BudgetData>) => void;
   resetAll: () => void;
   exportJson: () => string;
+  addBudget: (name: string, range?: DateRange | null) => string;
+  setActiveBudget: (id: string) => void;
+  updateBudget: (id: string, patch: { name?: string; defaultRange?: DateRange }) => void;
+  removeBudget: (id: string) => void;
 }
 
-type BudgetState = BudgetData & BudgetActions;
+type BudgetState = BudgetData & MultiBudgetSlice & BudgetActions;
 
-const initial: BudgetData = {
-  balance: 0,
-  income: DEFAULT_INCOME,
-  bills: DEFAULT_BILLS,
-  paid: {},
-  periods: DEFAULT_PERIODS,
-  activePeriodId: DEFAULT_PERIOD_ID,
-  dateRange: null,
+function freshDefaultData(): BudgetData {
+  return {
+    balance: 0,
+    income: DEFAULT_INCOME,
+    bills: DEFAULT_BILLS,
+    paid: {},
+    periods: DEFAULT_PERIODS,
+    activePeriodId: DEFAULT_PERIOD_ID,
+    dateRange: null,
+  };
+}
+
+function snapshotData(s: BudgetState): BudgetData {
+  return {
+    balance: s.balance,
+    income: s.income,
+    bills: s.bills,
+    paid: s.paid,
+    periods: s.periods,
+    activePeriodId: s.activePeriodId,
+    dateRange: s.dateRange,
+  };
+}
+
+function copyDataWithFreshIds(data: BudgetData): BudgetData {
+  const periodIdMap = new Map<string, string>();
+  const periods = data.periods.map((p) => {
+    const newId = uid();
+    periodIdMap.set(p.id, newId);
+    return { ...p, id: newId };
+  });
+  const remapPeriodId = (oldId: string) => periodIdMap.get(oldId) ?? periods[0]?.id ?? oldId;
+  const income = data.income.map((r) => ({
+    ...r,
+    id: uid(),
+    periodId: remapPeriodId(r.periodId),
+  }));
+  const bills = data.bills.map((b) => ({
+    ...b,
+    id: uid(),
+    periodId: remapPeriodId(b.periodId),
+  }));
+  return {
+    balance: data.balance,
+    income,
+    bills,
+    paid: {},
+    periods,
+    activePeriodId: remapPeriodId(data.activePeriodId),
+    dateRange: data.dateRange,
+  };
+}
+
+const initial: BudgetData & MultiBudgetSlice = {
+  ...freshDefaultData(),
+  budgets: DEFAULT_BUDGETS,
+  activeBudgetId: DEFAULT_BUDGET_ID,
+  budgetData: {},
 };
 
-function defaultDateForPeriod(periods: BudgetPeriod[], activeId: string): string {
-  const active = periods.find((p) => p.id === activeId);
-  return active?.startDate ?? '2026-04-15';
+function defaultDateForNew(s: {
+  dateRange: DateRange | null;
+  periods: BudgetPeriod[];
+  activePeriodId: string;
+}): string {
+  if (s.dateRange) return s.dateRange.start;
+  const active = s.periods.find((p) => p.id === s.activePeriodId);
+  return active?.startDate ?? todayIso();
+}
+
+/**
+ * Persisted-state migration chain. Exported so unit tests can drive the
+ * full v1 → STORE_VERSION sequence without spinning up the Zustand store.
+ *
+ * Every branch is additive — it must produce a v(N) shape from v(N-1)
+ * input. Never rename a field without a migration; never drop a field
+ * without explicit user-data-loss approval.
+ */
+export function migrateBudgetState(
+  raw: unknown,
+  fromVersion: number,
+): BudgetData & MultiBudgetSlice {
+  let s = (raw ?? {}) as Partial<BudgetData & MultiBudgetSlice>;
+  if (fromVersion < 2) {
+    const id = DEFAULT_PERIOD_ID;
+    const period: BudgetPeriod = { id, startDate: '2026-04-09', endDate: '2026-05-14' };
+    s = {
+      ...s,
+      periods: s.periods ?? [period],
+      activePeriodId: s.activePeriodId ?? id,
+      income: (s.income ?? []).map((r) => ({ ...r, periodId: r.periodId ?? id })),
+      bills: (s.bills ?? []).map((r) => ({ ...r, periodId: r.periodId ?? id })),
+    };
+  }
+  if (fromVersion < 3) {
+    s = { ...s, dateRange: s.dateRange ?? null };
+  }
+  if (fromVersion < 4) {
+    s = {
+      ...s,
+      budgets: (s.budgets ?? [
+        {
+          id: DEFAULT_BUDGET_ID,
+          name: 'My Budget',
+          createdAt: new Date().toISOString(),
+        },
+      ]) as BudgetMeta[],
+      activeBudgetId: s.activeBudgetId ?? DEFAULT_BUDGET_ID,
+      budgetData: s.budgetData ?? {},
+    };
+  }
+  if (fromVersion < 5) {
+    const periodLookup = s.periods ?? [];
+    const activePeriod = periodLookup.find((p) => p.id === s.activePeriodId);
+    const fallbackRange: DateRange =
+      s.dateRange ??
+      (activePeriod
+        ? { start: activePeriod.startDate, end: activePeriod.endDate }
+        : { start: '2026-04-09', end: '2026-05-14' });
+    s = {
+      ...s,
+      budgets: (s.budgets ?? []).map((b) =>
+        b.defaultRange ? b : { ...b, defaultRange: fallbackRange },
+      ),
+    };
+  }
+  if (fromVersion < 6) {
+    s = {
+      ...s,
+      income: (s.income ?? []).map((r) => ({ ...r, cadence: r.cadence ?? 'once' })),
+    };
+  }
+  if (fromVersion < 7) {
+    const billResult = dedupeBills(s.bills ?? [], s.paid ?? {});
+    const incomeResult = dedupeIncome(s.income ?? [], billResult.paid);
+    s = {
+      ...s,
+      bills: billResult.rows,
+      income: incomeResult.rows,
+      paid: incomeResult.paid,
+    };
+  }
+  if (fromVersion < 8) {
+    // Replace the brittle `name.includes('subscription')` heuristic with a
+    // proper `tags` array. Existing subscription bills are tagged in-place;
+    // new bills get tags via UI / user action (no auto-tagging on add).
+    s = {
+      ...s,
+      bills: (s.bills ?? []).map((b) => {
+        if (b.tags && b.tags.includes('subscription')) return b;
+        const isSubscription = b.name?.toLowerCase().includes('subscription');
+        if (!isSubscription) return b;
+        return { ...b, tags: [...(b.tags ?? []), 'subscription'] };
+      }),
+    };
+  }
+  return s as BudgetData & MultiBudgetSlice;
 }
 
 export const useBudget = create<BudgetState>()(
@@ -66,20 +237,24 @@ export const useBudget = create<BudgetState>()(
 
       setBalance: (v) => set({ balance: Number.isFinite(v) ? v : 0 }),
 
-      addIncome: () =>
+      addIncome: () => {
+        const id = uid();
         set((s) => ({
           income: [
             ...s.income,
             {
-              id: uid(),
+              id,
               periodId: s.activePeriodId,
               source: 'New source',
-              date: defaultDateForPeriod(s.periods, s.activePeriodId),
+              date: defaultDateForNew(s),
               amount: 0,
               status: 'expected',
+              cadence: 'once',
             },
           ],
-        })),
+        }));
+        return id;
+      },
       updateIncome: (id, patch) =>
         set((s) => ({
           income: s.income.map((r) => (r.id === id ? { ...r, ...patch } : r)),
@@ -87,27 +262,37 @@ export const useBudget = create<BudgetState>()(
       removeIncome: (id) =>
         set((s) => ({ income: s.income.filter((r) => r.id !== id) })),
 
-      addBill: () =>
+      addBill: () => {
+        const id = uid();
         set((s) => ({
           bills: [
             ...s.bills,
             {
-              id: uid(),
+              id,
               periodId: s.activePeriodId,
               name: 'New bill',
-              date: defaultDateForPeriod(s.periods, s.activePeriodId),
+              date: defaultDateForNew(s),
               amount: 0,
               priority: 'imp',
               action: 'pay-full',
             },
           ],
-        })),
+        }));
+        return id;
+      },
       updateBill: (id, patch) =>
         set((s) => ({
           bills: s.bills.map((r) => (r.id === id ? { ...r, ...patch } : r)),
         })),
       removeBill: (id) =>
         set((s) => ({ bills: s.bills.filter((r) => r.id !== id) })),
+      dedupeAll: () =>
+        set((s) => {
+          const b = dedupeBills(s.bills, s.paid);
+          const i = dedupeIncome(s.income, b.paid);
+          if (b.removed === 0 && i.removed === 0) return {};
+          return { bills: b.rows, income: i.rows, paid: i.paid };
+        }),
       reorderBill: (fromId, toId) =>
         set((s) => {
           if (fromId === toId) return {};
@@ -140,6 +325,12 @@ export const useBudget = create<BudgetState>()(
                 .map((r) => {
                   const newId = uid();
                   if (s.paid[`inc_${r.id}`]) paidAdditions[`inc_${newId}`] = true;
+                  const recurringPrefix = `inc_${r.id}_`;
+                  for (const k of Object.keys(s.paid)) {
+                    if (s.paid[k] && k.startsWith(recurringPrefix)) {
+                      paidAdditions[`inc_${newId}_${k.slice(recurringPrefix.length)}`] = true;
+                    }
+                  }
                   return { ...r, id: newId, periodId: id };
                 })
             : [];
@@ -217,18 +408,21 @@ export const useBudget = create<BudgetState>()(
             rows
               ? rows.map((r) => ({ ...r, periodId: r.periodId ?? fallbackPeriodId }))
               : s.bills;
+          const incomingPaid = data.paid ?? s.paid;
+          const billResult = dedupeBills(coerceBills(data.bills), incomingPaid);
+          const incomeResult = dedupeIncome(coerceIncome(data.income), billResult.paid);
           return {
             balance: data.balance ?? s.balance,
-            income: coerceIncome(data.income),
-            bills: coerceBills(data.bills),
-            paid: data.paid ?? s.paid,
+            income: incomeResult.rows,
+            bills: billResult.rows,
+            paid: incomeResult.paid,
             periods: nextPeriods,
             activePeriodId: fallbackPeriodId,
             dateRange: data.dateRange ?? null,
           };
         }),
 
-      resetAll: () => set({ ...initial }),
+      resetAll: () => set(freshDefaultData()),
 
       exportJson: () => {
         const { balance, income, bills, paid, periods, activePeriodId, dateRange } = get();
@@ -238,10 +432,122 @@ export const useBudget = create<BudgetState>()(
           2,
         );
       },
+
+      addBudget: (name, range) => {
+        const trimmed = name.trim() || 'Untitled budget';
+        const id = uid();
+        set((s) => {
+          const copied = copyDataWithFreshIds(snapshotData(s));
+          const withRange = range
+            ? {
+                ...copied,
+                dateRange: range,
+                periods: copied.periods.map((p) =>
+                  p.id === copied.activePeriodId
+                    ? { ...p, startDate: range.start, endDate: range.end }
+                    : p,
+                ),
+              }
+            : copied;
+          const fallbackPeriod = withRange.periods.find(
+            (p) => p.id === withRange.activePeriodId,
+          );
+          const defaultRange: DateRange = range
+            ?? (fallbackPeriod
+              ? { start: fallbackPeriod.startDate, end: fallbackPeriod.endDate }
+              : { start: todayIso(), end: addDaysIso(todayIso(), 29) });
+          const meta: BudgetMeta = {
+            id,
+            name: trimmed,
+            createdAt: new Date().toISOString(),
+            defaultRange,
+          };
+          const nextBudgetData = {
+            ...s.budgetData,
+            [s.activeBudgetId]: snapshotData(s),
+          };
+          return {
+            ...withRange,
+            budgets: [...s.budgets, meta],
+            activeBudgetId: id,
+            budgetData: nextBudgetData,
+          };
+        });
+        return id;
+      },
+
+      setActiveBudget: (id) =>
+        set((s) => {
+          if (id === s.activeBudgetId) return {};
+          const targetMeta = s.budgets.find((b) => b.id === id);
+          if (!targetMeta) return {};
+          const next = s.budgetData[id];
+          if (!next) return {};
+          const nextBudgetData = { ...s.budgetData };
+          delete nextBudgetData[id];
+          nextBudgetData[s.activeBudgetId] = snapshotData(s);
+          return {
+            ...next,
+            dateRange: targetMeta.defaultRange,
+            activeBudgetId: id,
+            budgetData: nextBudgetData,
+          };
+        }),
+
+      updateBudget: (id, patch) =>
+        set((s) => {
+          if (!s.budgets.some((b) => b.id === id)) return {};
+          const trimmed = patch.name !== undefined ? patch.name.trim() : undefined;
+          if (trimmed !== undefined && !trimmed) return {};
+          const nextRange = patch.defaultRange;
+          const budgets = s.budgets.map((b) => {
+            if (b.id !== id) return b;
+            return {
+              ...b,
+              ...(trimmed !== undefined ? { name: trimmed } : {}),
+              ...(nextRange ? { defaultRange: nextRange } : {}),
+            };
+          });
+          if (!nextRange || id !== s.activeBudgetId) {
+            return { budgets };
+          }
+          return {
+            budgets,
+            dateRange: nextRange,
+            periods: s.periods.map((p) =>
+              p.id === s.activePeriodId
+                ? { ...p, startDate: nextRange.start, endDate: nextRange.end }
+                : p,
+            ),
+          };
+        }),
+
+      removeBudget: (id) =>
+        set((s) => {
+          if (s.budgets.length <= 1) return {};
+          if (!s.budgets.some((b) => b.id === id)) return {};
+          const remaining = s.budgets.filter((b) => b.id !== id);
+          if (id !== s.activeBudgetId) {
+            const nextBudgetData = { ...s.budgetData };
+            delete nextBudgetData[id];
+            return { budgets: remaining, budgetData: nextBudgetData };
+          }
+          const nextActive = remaining[0];
+          const nextData = s.budgetData[nextActive.id];
+          const nextBudgetData = { ...s.budgetData };
+          delete nextBudgetData[nextActive.id];
+          delete nextBudgetData[id];
+          return {
+            ...(nextData ?? freshDefaultData()),
+            budgets: remaining,
+            activeBudgetId: nextActive.id,
+            budgetData: nextBudgetData,
+          };
+        }),
     }),
     {
       name: 'budget_v1',
-      version: 3,
+      version: STORE_VERSION,
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
         balance: s.balance,
@@ -251,25 +557,11 @@ export const useBudget = create<BudgetState>()(
         periods: s.periods,
         activePeriodId: s.activePeriodId,
         dateRange: s.dateRange,
+        budgets: s.budgets,
+        activeBudgetId: s.activeBudgetId,
+        budgetData: s.budgetData,
       }),
-      migrate: (raw, fromVersion) => {
-        let s = (raw ?? {}) as Partial<BudgetData>;
-        if (fromVersion < 2) {
-          const id = DEFAULT_PERIOD_ID;
-          const period: BudgetPeriod = { id, startDate: '2026-04-09', endDate: '2026-05-14' };
-          s = {
-            ...s,
-            periods: s.periods ?? [period],
-            activePeriodId: s.activePeriodId ?? id,
-            income: (s.income ?? []).map((r) => ({ ...r, periodId: r.periodId ?? id })),
-            bills: (s.bills ?? []).map((r) => ({ ...r, periodId: r.periodId ?? id })),
-          };
-        }
-        if (fromVersion < 3) {
-          s = { ...s, dateRange: s.dateRange ?? null };
-        }
-        return s as BudgetData;
-      },
+      migrate: (raw, fromVersion) => migrateBudgetState(raw, fromVersion),
     }
   )
 );

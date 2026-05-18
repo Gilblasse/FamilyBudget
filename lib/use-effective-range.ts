@@ -2,7 +2,6 @@
 
 import { useMemo } from 'react';
 import { useBudget } from './store';
-import { clampRangeToPeriod } from './filters';
 import type { DateRange } from './types';
 
 export function useEffectiveDateRange(): DateRange | null {
@@ -10,7 +9,8 @@ export function useEffectiveDateRange(): DateRange | null {
   const activeId = useBudget((s) => s.activePeriodId);
   const raw = useBudget((s) => s.dateRange);
   return useMemo(() => {
+    if (raw) return raw;
     const period = periods.find((p) => p.id === activeId);
-    return clampRangeToPeriod(raw, period);
+    return period ? { start: period.startDate, end: period.endDate } : null;
   }, [periods, activeId, raw]);
 }

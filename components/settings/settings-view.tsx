@@ -9,12 +9,14 @@ import {
   Download,
   Monitor,
   Moon,
+  Pencil,
   Plus,
   RotateCcw,
   Sparkles,
   Sun,
   Trash2,
   Upload,
+  Wallet,
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
@@ -56,6 +58,8 @@ import {
 import { useBudget } from '@/lib/store';
 import { useMounted } from '@/lib/use-mounted';
 import { fdRange } from '@/lib/format';
+import { addDaysIso, todayIso } from '@/lib/date-utils';
+import type { BudgetMeta } from '@/lib/types';
 import { useAIStatusInfo } from '@/lib/ai/enabled';
 import { cn } from '@/lib/utils';
 
@@ -71,6 +75,7 @@ export function SettingsView() {
         onImport={importer.open}
         onExport={exportBudget}
       />
+      <BudgetsSection mounted={mounted} />
       <PeriodSection mounted={mounted} />
       <AppearanceSection />
       <AISection />
@@ -109,6 +114,288 @@ function DataSection({
           </Button>
         </ResetDialog>
       </CardContent>
+    </Card>
+  );
+}
+
+function BudgetsSection({ mounted }: { mounted: boolean }) {
+  const budgets = useBudget((s) => s.budgets);
+  const activeBudgetId = useBudget((s) => s.activeBudgetId);
+  const budgetData = useBudget((s) => s.budgetData);
+  const income = useBudget((s) => s.income);
+  const bills = useBudget((s) => s.bills);
+  const addBudget = useBudget((s) => s.addBudget);
+  const setActiveBudget = useBudget((s) => s.setActiveBudget);
+  const updateBudget = useBudget((s) => s.updateBudget);
+  const removeBudget = useBudget((s) => s.removeBudget);
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createName, setCreateName] = useState('');
+  const [createStart, setCreateStart] = useState('');
+  const [createEnd, setCreateEnd] = useState('');
+
+  const [editTarget, setEditTarget] = useState<BudgetMeta | null>(null);
+  const [editName, setEditName] = useState('');
+
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+
+  const sortedBudgets = useMemo(
+    () => [...budgets].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    [budgets],
+  );
+  const canDelete = budgets.length > 1;
+  const pendingDeleteBudget = useMemo(
+    () => (pendingDeleteId ? budgets.find((b) => b.id === pendingDeleteId) ?? null : null),
+    [budgets, pendingDeleteId],
+  );
+
+  function countsFor(id: string): { incomeCount: number | null; billCount: number | null } {
+    if (id === activeBudgetId) {
+      return { incomeCount: income.length, billCount: bills.length };
+    }
+    const snap = budgetData[id];
+    if (!snap) return { incomeCount: null, billCount: null };
+    return { incomeCount: snap.income.length, billCount: snap.bills.length };
+  }
+
+  function openCreate() {
+    setCreateName('');
+    const start = todayIso();
+    setCreateStart(start);
+    setCreateEnd(addDaysIso(start, 29));
+    setCreateOpen(true);
+  }
+
+  function handleCreate() {
+    const trimmed = createName.trim();
+    if (!trimmed) {
+      toast.error('Name is required.');
+      return;
+    }
+    if (!createStart || !createEnd) {
+      toast.error('Pick both a start and end date.');
+      return;
+    }
+    if (createStart > createEnd) {
+      toast.error('Start date must be on or before end date.');
+      return;
+    }
+    addBudget(trimmed, { start: createStart, end: createEnd });
+    setCreateOpen(false);
+    toast.success(`Created · ${trimmed}`);
+  }
+
+  function openEdit(b: BudgetMeta) {
+    setEditTarget(b);
+    setEditName(b.name);
+  }
+
+  function handleEditSave() {
+    if (!editTarget) return;
+    const trimmed = editName.trim();
+    if (!trimmed) {
+      toast.error('Name is required.');
+      return;
+    }
+    updateBudget(editTarget.id, { name: trimmed });
+    setEditTarget(null);
+    toast.success('Renamed');
+  }
+
+  function handleDeleteConfirm() {
+    if (!pendingDeleteId) return;
+    removeBudget(pendingDeleteId);
+    setPendingDeleteId(null);
+    toast.success('Budget deleted');
+  }
+
+  return (
+    <Card>
+      <CardHeader className="gap-1.5">
+        <CardTitle className="flex items-center gap-2">
+          <Wallet className="size-4 text-muted-foreground" /> Budgets
+        </CardTitle>
+        <CardDescription>
+          Keep multiple budgets side-by-side — switch the active budget from the sidebar
+          or here. Each budget has its own income, bills, and periods.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <ul className="divide-y divide-border-subtle rounded-lg border border-border-subtle">
+          {sortedBudgets.map((b) => {
+            const active = b.id === activeBudgetId;
+            const { incomeCount, billCount } = countsFor(b.id);
+            return (
+              <li
+                key={b.id}
+                className={cn(
+                  'flex items-center justify-between gap-3 px-3 py-2.5',
+                  active && 'bg-brand-50/60',
+                )}
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium truncate">{b.name}</span>
+                    {active ? (
+                      <Badge size="sm" variant="success">
+                        <CheckCircle2 className="size-3" /> Active
+                      </Badge>
+                    ) : null}
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    <span className="money">
+                      {mounted ? fdRange(b.defaultRange.start, b.defaultRange.end) : '—'}
+                    </span>
+                    {' · '}
+                    {incomeCount === null ? '—' : `${incomeCount} income`}
+                    {' · '}
+                    {billCount === null ? '—' : `${billCount} bills`}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {!active ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setActiveBudget(b.id);
+                        toast.success(`Switched to ${b.name}`);
+                      }}
+                    >
+                      Set active
+                    </Button>
+                  ) : null}
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`Rename ${b.name}`}
+                    onClick={() => openEdit(b)}
+                  >
+                    <Pencil className="size-3.5 text-muted-foreground" />
+                  </Button>
+                  {canDelete ? (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`Delete ${b.name}`}
+                      onClick={() => setPendingDeleteId(b.id)}
+                    >
+                      <Trash2 className="size-3.5 text-muted-foreground" />
+                    </Button>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        <Button variant="outline" onClick={openCreate}>
+          <Plus className="size-4" /> Add budget
+        </Button>
+      </CardContent>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New budget</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="budget-name">Name</Label>
+              <Input
+                id="budget-name"
+                placeholder="e.g. Side hustle"
+                value={createName}
+                onChange={(e) => setCreateName(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Default start date</Label>
+              <DatePicker
+                value={createStart}
+                onChange={setCreateStart}
+                placeholder="Pick start"
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Default end date</Label>
+              <DatePicker
+                value={createEnd}
+                onChange={setCreateEnd}
+                placeholder="Pick end"
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Copies the current budget&rsquo;s income and bills into the new workspace.
+              Paid markers are cleared.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreate} disabled={!createName.trim()}>
+              Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={editTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename budget</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="budget-rename">Name</Label>
+              <Input
+                id="budget-rename"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                autoFocus
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTarget(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleEditSave} disabled={!editName.trim()}>
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={pendingDeleteId !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeleteId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this budget?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDeleteBudget
+                ? `"${pendingDeleteBudget.name}" — permanently removes its income, bills, periods, and paid markers. Other budgets are unaffected. This cannot be undone.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={handleDeleteConfirm}>
+              Delete budget
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }
@@ -382,7 +669,14 @@ function AppearanceSection() {
 
 function AISection() {
   const info = useAIStatusInfo();
-  const enabled = info.status === 'enabled';
+  const mounted = useMounted();
+  // Render the neutral "Checking…" branch on the server and on the first
+  // client render. After mount we trust `info.status`. Without this gate,
+  // `useAIStatusInfo` may resolve synchronously on the client (cached
+  // status fetch) and produce a hydration mismatch against the server's
+  // "unknown" output.
+  const status = mounted ? info.status : 'unknown';
+  const enabled = status === 'enabled';
   return (
     <Card>
       <CardHeader className="gap-1.5">
@@ -399,7 +693,7 @@ function AISection() {
       <CardContent className="flex items-center justify-between gap-3">
         <div className="text-sm">
           Current status:{' '}
-          {info.status === 'unknown' ? (
+          {status === 'unknown' ? (
             <Badge variant="neutral">Checking…</Badge>
           ) : enabled ? (
             <Badge variant="success">
@@ -410,7 +704,7 @@ function AISection() {
               <AlertTriangle className="size-3" /> Disabled
             </Badge>
           )}
-          {info.reason ? (
+          {mounted && info.reason ? (
             <span className="ml-2 text-xs text-muted-foreground">{info.reason}</span>
           ) : null}
         </div>

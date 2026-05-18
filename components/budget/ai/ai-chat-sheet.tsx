@@ -155,10 +155,8 @@ function AiChatSheetInner({
     const i = input as Record<string, unknown>;
     switch (tool) {
       case 'addBill': {
-        store.addBill();
-        const newBill = useBudget.getState().bills.at(-1);
-        if (!newBill) return 'failed: could not create bill';
-        store.updateBill(newBill.id, {
+        const id = store.addBill();
+        store.updateBill(id, {
           name: String(i.name),
           date: String(i.date),
           amount: Number(i.amount) || 0,
@@ -168,10 +166,8 @@ function AiChatSheetInner({
         return `Added bill "${i.name}"`;
       }
       case 'addIncome': {
-        store.addIncome();
-        const newIncome = useBudget.getState().income.at(-1);
-        if (!newIncome) return 'failed: could not create income';
-        store.updateIncome(newIncome.id, {
+        const id = store.addIncome();
+        store.updateIncome(id, {
           source: String(i.source),
           date: String(i.date),
           amount: Number(i.amount) || 0,

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import { Download, Upload, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -16,9 +17,24 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { useBudget } from '@/lib/store';
-import { AiChatSheet } from './ai/ai-chat-sheet';
+import { AiBoundary } from './ai/ai-boundary';
 import { AiConfigNotice } from './ai/ai-config-notice';
-import { AiExtractDialog } from './ai/ai-extract-dialog';
+
+// Heavy AI surfaces are lazy-loaded so the @ai-sdk/* and `ai` packages
+// stay out of the initial bundle when AI is disabled. AiBoundary below
+// gates the actual render on `useAILauncher().status === 'enabled'`, so
+// the chunk only loads after the user has wired in an API key.
+const AiChatSheet = dynamic(
+  () => import('./ai/ai-chat-sheet').then((m) => ({ default: m.AiChatSheet })),
+  { ssr: false },
+);
+const AiExtractDialog = dynamic(
+  () =>
+    import('./ai/ai-extract-dialog').then((m) => ({
+      default: m.AiExtractDialog,
+    })),
+  { ssr: false },
+);
 
 export function useExportBudget() {
   const exportJson = useBudget((s) => s.exportJson);
@@ -105,10 +121,10 @@ export function ResetDialog({ children }: { children: React.ReactElement }) {
       <AlertDialogTrigger render={children} />
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Reset everything?</AlertDialogTitle>
+          <AlertDialogTitle>Reset this budget?</AlertDialogTitle>
           <AlertDialogDescription>
-            This will replace all income, bills, and paid/received markers with the seed
-            defaults. Your current data will be lost. Consider exporting first.
+            Replaces income, bills, and paid/received markers in the active budget with
+            the seed defaults. Other budgets are unaffected. Consider exporting first.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -150,15 +166,17 @@ export function DataControls() {
       >
         <Download className="h-4 w-4" /> Export
       </Button>
-      <AiExtractDialog />
-      <AiChatSheet />
+      <AiBoundary>
+        <AiExtractDialog />
+        <AiChatSheet />
+      </AiBoundary>
       <ResetDialog>
         <Button
           variant="outline"
           size="sm"
           className="h-10 text-expense hover:text-expense sm:h-9"
         >
-          <RotateCcw className="h-4 w-4" /> Reset to defaults
+          <RotateCcw className="h-4 w-4" /> Reset budget
         </Button>
       </ResetDialog>
       <AiConfigNotice />

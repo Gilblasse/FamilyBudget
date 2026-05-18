@@ -56,33 +56,27 @@ export function AppHeader() {
 
   const bills = useBudget((s) => s.bills);
   const paid = useBudget((s) => s.paid);
-  const activePeriodId = useBudget((s) => s.activePeriodId);
-  const periods = useBudget((s) => s.periods);
 
   const { dueSoon, overdueCount } = useMemo(() => {
-    const period = periods.find((p) => p.id === activePeriodId);
-    if (!period) return { dueSoon: [], overdueCount: 0 };
     const today = new Date().toISOString().slice(0, 10);
     const cutoff = (() => {
       const d = new Date();
       d.setDate(d.getDate() + 7);
       return d.toISOString().slice(0, 10);
     })();
-    const unpaid = bills
-      .filter((b) => b.periodId === activePeriodId)
-      .filter((b) => !paid[`bill_${b.id}`]);
+    const unpaid = bills.filter((b) => !paid[`bill_${b.id}`]);
     const dueSoon = unpaid
       .filter((b) => b.date >= today && b.date <= cutoff)
       .sort((a, b) => a.date.localeCompare(b.date));
     const overdueCount = unpaid.filter((b) => b.date < today).length;
     return { dueSoon, overdueCount };
-  }, [bills, paid, periods, activePeriodId]);
+  }, [bills, paid]);
 
   const hasOverdue = overdueCount > 0;
 
   // Pages can opt-in to the picker by removing themselves from this set and
   // rendering <HeaderDateRangePicker /> (or <DateRangePicker /> with custom props) inline.
-  const hideDateRangeOn = new Set(['/income', '/bills', '/settings', '/help-center']);
+  const hideDateRangeOn = new Set(['/settings', '/help-center']);
 
   return (
     <header className="sticky top-0 z-20 flex flex-wrap items-center gap-3 border-b border-border-subtle bg-background/95 px-4 py-3 backdrop-blur supports-backdrop-filter:bg-background/70 sm:px-6 lg:px-8">

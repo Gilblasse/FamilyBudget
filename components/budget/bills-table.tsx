@@ -11,6 +11,7 @@ import {
   Inbox,
   Pencil,
   Plus,
+  Tag as TagIcon,
   Trash2,
   X,
 } from 'lucide-react';
@@ -33,6 +34,11 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import {
   Table,
   TableBody,
   TableCell,
@@ -50,11 +56,26 @@ import {
 } from '@/components/ui/select';
 import { Metric } from './metric';
 import { PriorityDot } from './priority-dot';
+import { RangeStatus } from './range-status';
 import { SeverityTag } from './severity-tag';
-import { AiSuggestButton } from './ai/ai-suggest-button';
+import dynamic from 'next/dynamic';
+import { AiBoundary } from './ai/ai-boundary';
+
+// Lazy-loaded so the AI Zod schema + per-bill `fetch('/api/ai/classify')`
+// code path stays out of the initial bills-page bundle until AI is on.
+const AiSuggestButton = dynamic(
+  () =>
+    import('./ai/ai-suggest-button').then((m) => ({
+      default: m.AiSuggestButton,
+    })),
+  { ssr: false },
+);
 import { useBudget } from '@/lib/store';
 import { useUIStore } from '@/lib/ui-store';
 import { fmt } from '@/lib/format';
+import { useEffectiveDateRange } from '@/lib/use-effective-range';
+import { expandAllIncome } from '@/lib/recurrence';
+import { visibleBills } from '@/lib/visibility';
 import {
   ACTION_LABEL,
   PRIORITY_LABEL,
@@ -63,91 +84,86 @@ import {
   type Priority,
 } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { actionVariant } from '@/lib/badges';
+import { applySort, dirFor, nextDir, type SortState } from '@/lib/sort';
+import { isActiveBill, isImportantBill } from '@/lib/derived';
+import {
+  MAX_TAGS_PER_BILL,
+  MAX_TAG_LENGTH,
+  normalizeTag,
+} from '@/lib/tags';
 
-function actionVariant(a: BillAction): 'default' | 'warning' | 'danger' | 'neutral' {
-  if (a === 'pay-full') return 'default';
-  if (a === 'partial' || a === 'reduce') return 'warning';
-  if (a === 'skip' || a === 'delay') return 'danger';
-  return 'neutral';
-}
-
-type SortDir = 'asc' | 'desc' | 'none';
 type SortCol = 'name' | 'due' | 'amount';
-type SortState = { col: SortCol; dir: 'asc' | 'desc' } | null;
-
-function nextDir(current: SortState, col: SortCol): SortState {
-  if (!current || current.col !== col) return { col, dir: 'asc' };
-  if (current.dir === 'asc') return { col, dir: 'desc' };
-  return null;
-}
-
-function dirFor(state: SortState, col: SortCol): SortDir {
-  if (state && state.col === col) return state.dir;
-  return 'none';
-}
 
 export function BillsTable() {
   const bills = useBudget((s) => s.bills);
   const income = useBudget((s) => s.income);
   const balance = useBudget((s) => s.balance);
-  const activePeriodId = useBudget((s) => s.activePeriodId);
   const addBill = useBudget((s) => s.addBill);
   const updateBill = useBudget((s) => s.updateBill);
   const removeBill = useBudget((s) => s.removeBill);
   const reorderBill = useBudget((s) => s.reorderBill);
   const searchQuery = useUIStore((s) => s.searchQuery);
   const clearSearchQuery = useUIStore((s) => s.clearSearchQuery);
+  const range = useEffectiveDateRange();
 
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
-  const [sort, setSort] = useState<SortState>(null);
+  const [sort, setSort] = useState<SortState<SortCol>>(null);
   const [showSubscriptions, setShowSubscriptions] = useState(false);
+  const [viewMode, setViewMode] = useState<'filtered' | 'all'>('filtered');
+  const effectiveRange = viewMode === 'all' ? null : range;
 
+  const billsInRange = useMemo(
+    () => visibleBills(bills, range),
+    [bills, range],
+  );
   const scopedBills = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return bills
-      .filter((b) => b.periodId === activePeriodId)
-      .filter((b) => (q ? b.name.toLowerCase().includes(q) : true));
-  }, [bills, activePeriodId, searchQuery]);
-  const displayedBills = useMemo(() => {
-    if (!sort) return scopedBills;
-    const dir = sort.dir === 'asc' ? 1 : -1;
-    const copy = [...scopedBills];
-    if (sort.col === 'due') {
-      copy.sort((a, b) => a.date.localeCompare(b.date) * dir);
-    } else if (sort.col === 'name') {
-      copy.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) * dir);
-    } else if (sort.col === 'amount') {
-      copy.sort((a, b) => (a.amount - b.amount) * dir);
-    }
-    return copy;
-  }, [scopedBills, sort]);
+    const visible = visibleBills(bills, effectiveRange);
+    return q
+      ? visible.filter((b) => b.name.toLowerCase().includes(q))
+      : visible;
+  }, [bills, effectiveRange, searchQuery]);
+  const displayedBills = useMemo(
+    () =>
+      applySort(scopedBills, sort, {
+        name: (b) => b.name,
+        due: (b) => b.date,
+        amount: (b) => b.amount,
+      }),
+    [scopedBills, sort],
+  );
   const isSorted = sort !== null;
 
   const { regularBills, subscriptionBills, subscriptionTotal } = useMemo(() => {
     const subs: Bill[] = [];
     const rest: Bill[] = [];
     for (const b of displayedBills) {
-      if (b.name.toLowerCase().includes('subscription')) subs.push(b);
+      if (b.tags?.includes('subscription')) subs.push(b);
       else rest.push(b);
     }
     const total = subs.reduce((s, b) => s + b.amount, 0);
     return { regularBills: rest, subscriptionBills: subs, subscriptionTotal: total };
   }, [displayedBills]);
-  const scopedIncome = useMemo(
-    () => income.filter((r) => r.periodId === activePeriodId),
-    [income, activePeriodId],
+  const scopedIncomeTotal = useMemo(
+    () =>
+      expandAllIncome(income, effectiveRange).reduce(
+        (s, r) => s + r.amount,
+        0,
+      ),
+    [income, effectiveRange],
   );
 
   const { totalActive, critImp, net } = useMemo(() => {
-    const active = scopedBills.filter((b) => b.action !== 'skip' && b.action !== 'delay');
+    const active = scopedBills.filter(isActiveBill);
     const totalActive = active.reduce((s, b) => s + b.amount, 0);
     const critImp = active
-      .filter((b) => b.priority === 'crit' || b.priority === 'imp')
+      .filter(isImportantBill)
       .reduce((s, b) => s + b.amount, 0);
-    const totalInc = scopedIncome.reduce((s, r) => s + r.amount, 0) + balance;
+    const totalInc = scopedIncomeTotal + balance;
     return { totalActive, critImp, net: totalInc - totalActive };
-  }, [scopedBills, scopedIncome, balance]);
+  }, [scopedBills, scopedIncomeTotal, balance]);
 
   function onDragStart(e: DragEvent<HTMLTableRowElement>, id: string) {
     setDragId(id);
@@ -178,10 +194,8 @@ export function BillsTable() {
       action: {
         label: 'Undo',
         onClick: () => {
-          addBill();
-          const created = useBudget.getState().bills.at(-1);
-          if (!created) return;
-          updateBill(created.id, {
+          const id = addBill();
+          updateBill(id, {
             name: snapshot.name,
             date: snapshot.date,
             amount: snapshot.amount,
@@ -289,7 +303,13 @@ export function BillsTable() {
         </TableCell>
         <TableCell>
           <div className="flex items-center justify-end gap-1">
-            <AiSuggestButton bill={r} />
+            <TagsButton
+              bill={r}
+              onChange={(tags) => updateBill(r.id, { tags })}
+            />
+            <AiBoundary>
+              <AiSuggestButton bill={r} />
+            </AiBoundary>
             <DeleteBillButton bill={r} onConfirm={() => handleRemove(r)} />
           </div>
         </TableCell>
@@ -304,6 +324,17 @@ export function BillsTable() {
         <Metric label="Crit + Important" value={fmt(critImp)} tone="warning" />
         <Metric label="Net" value={fmt(net)} tone={net >= 0 ? 'income' : 'expense'} />
       </div>
+
+      <RangeStatus
+        range={range}
+        mode={viewMode}
+        shown={billsInRange.length}
+        total={bills.length}
+        noun="bill"
+        onToggle={() =>
+          setViewMode((m) => (m === 'filtered' ? 'all' : 'filtered'))
+        }
+      />
 
       {searchQuery ? (
         <div className="flex items-center gap-2">
@@ -387,7 +418,7 @@ export function BillsTable() {
               <TableEmpty colSpan={7}>
                 <EmptyState
                   icon={Inbox}
-                  title="No bills in this period"
+                  title="No bills in the selected date range"
                   description={
                     searchQuery
                       ? 'Try clearing the filter.'
@@ -451,7 +482,7 @@ export function BillsTable() {
           <div className="rounded-2xl border border-border-subtle bg-card">
             <EmptyState
               icon={Inbox}
-              title="No bills in this period"
+              title="No bills in the selected date range"
               description="Add your first bill to get started."
               cta={
                 <Button size="sm" onClick={handleAdd}>
@@ -575,7 +606,14 @@ function BillCard({
             </Button>
           </div>
         )}
-        <AiSuggestButton bill={bill} className="h-11 w-11 shrink-0" />
+        <TagsButton
+          bill={bill}
+          onChange={(tags) => onUpdate(bill.id, { tags })}
+          className="h-11 w-11 shrink-0"
+        />
+        <AiBoundary>
+          <AiSuggestButton bill={bill} className="h-11 w-11 shrink-0" />
+        </AiBoundary>
         <DeleteBillButton
           bill={bill}
           onConfirm={() => onRemove(bill)}
@@ -773,5 +811,126 @@ function DeleteBillButton({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+function TagsButton({
+  bill,
+  onChange,
+  className,
+}: {
+  bill: Bill;
+  onChange: (tags: string[] | undefined) => void;
+  className?: string;
+}) {
+  const [draft, setDraft] = useState('');
+  const tags = bill.tags ?? [];
+  const count = tags.length;
+
+  function addTag() {
+    const t = normalizeTag(draft);
+    if (!t || t.length > MAX_TAG_LENGTH) return;
+    if (tags.includes(t)) {
+      setDraft('');
+      return;
+    }
+    if (tags.length >= MAX_TAGS_PER_BILL) return;
+    onChange([...tags, t]);
+    setDraft('');
+  }
+
+  function removeTag(t: string) {
+    const next = tags.filter((x) => x !== t);
+    onChange(next.length > 0 ? next : undefined);
+  }
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={
+              count > 0
+                ? `Edit tags (${count})`
+                : 'Add tags'
+            }
+            className={cn('relative', className)}
+          >
+            <TagIcon
+              className={cn(
+                'size-3.5',
+                count > 0 ? 'text-primary' : 'text-muted-foreground',
+              )}
+            />
+            {count > 0 ? (
+              <span
+                aria-hidden
+                className="absolute -right-0.5 -top-0.5 grid size-3.5 place-items-center rounded-full bg-primary text-[9px] font-semibold leading-none text-primary-foreground"
+              >
+                {count}
+              </span>
+            ) : null}
+          </Button>
+        }
+      />
+      <PopoverContent className="w-64 space-y-3 p-3">
+        <div className="space-y-1">
+          <Label className="text-xs font-medium">Tags</Label>
+          <p className="text-[11px] text-muted-foreground">
+            Tag <span className="font-medium">subscription</span> to group bills under the Subscriptions row.
+          </p>
+        </div>
+        {tags.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {tags.map((t) => (
+              <Badge key={t} variant="neutral" size="sm" className="gap-1 pr-1">
+                {t}
+                <button
+                  type="button"
+                  aria-label={`Remove tag ${t}`}
+                  onClick={() => removeTag(t)}
+                  className="grid size-3.5 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <X className="size-2.5" aria-hidden />
+                </button>
+              </Badge>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">No tags yet.</p>
+        )}
+        <div className="flex items-center gap-1.5">
+          <Input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                addTag();
+              }
+            }}
+            placeholder="Add tag"
+            maxLength={MAX_TAG_LENGTH}
+            disabled={tags.length >= MAX_TAGS_PER_BILL}
+            className="h-8 flex-1 text-xs"
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={addTag}
+            disabled={!normalizeTag(draft) || tags.length >= MAX_TAGS_PER_BILL}
+            className="h-8"
+          >
+            Add
+          </Button>
+        </div>
+        {tags.length >= MAX_TAGS_PER_BILL ? (
+          <p className="text-[11px] text-warning-700">Limit of {MAX_TAGS_PER_BILL} tags per bill.</p>
+        ) : null}
+      </PopoverContent>
+    </Popover>
   );
 }

@@ -4,21 +4,12 @@ import { useMemo } from 'react';
 import { useBudget } from '@/lib/store';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
 import { inRange } from '@/lib/filters';
-import type { Bill, Income, Priority } from '@/lib/types';
+import { expandAllIncome } from '@/lib/recurrence';
+import { endingBalance, openingBalanceEntry } from '@/lib/derived';
+import { fromIso, todayIso } from '@/lib/date-utils';
+import type { Bill, IncomeOccurrence, Priority } from '@/lib/types';
 import CashFlowPage, { type CashFlowPageProps } from './cash-flow-page';
 import type { TimelineDay, TimelineTxn, TxnKind } from './cash-flow-timeline';
-
-const DEFAULT_USER = { name: 'Family Budget', initials: 'FB' } as const;
-
-function parseUtc(iso: string): Date {
-  const [y, m, d] = iso.split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d));
-}
-
-function todayUtcKey(): string {
-  const now = new Date();
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
-}
 
 function priorityToKind(p: Priority): TxnKind {
   return p === 'crit' || p === 'imp' ? 'bill' : 'variable';
@@ -26,7 +17,7 @@ function priorityToKind(p: Priority): TxnKind {
 
 interface DayBucket {
   date: string;
-  incomes: Income[];
+  incomes: { source: string; amount: number }[];
   bills: Bill[];
 }
 
@@ -34,29 +25,24 @@ export function CashFlow() {
   const balance = useBudget((s) => s.balance);
   const income = useBudget((s) => s.income);
   const bills = useBudget((s) => s.bills);
-  const activePeriodId = useBudget((s) => s.activePeriodId);
   const periods = useBudget((s) => s.periods);
   const range = useEffectiveDateRange();
 
   const pageProps = useMemo<CashFlowPageProps>(() => {
-    const scopedIncome = income.filter(
-      (r) => r.periodId === activePeriodId && inRange(r.date, range),
-    );
+    const scopedIncome: IncomeOccurrence[] = expandAllIncome(income, range);
     const scopedBills = bills.filter(
-      (b) =>
-        b.periodId === activePeriodId &&
-        inRange(b.date, range) &&
-        b.action !== 'skip' &&
-        b.action !== 'delay',
+      (b) => inRange(b.date, range) && b.action !== 'skip' && b.action !== 'delay',
     );
 
-    const activePeriod = periods.find((p) => p.id === activePeriodId);
-    const startIso = range?.start ?? activePeriod?.startDate ?? '2026-04-09';
-    const endIso = range?.end ?? activePeriod?.endDate ?? '2026-05-14';
+    const startIso = range?.start ?? periods[0]?.startDate ?? todayIso();
 
     const allIncome = scopedIncome.reduce((s, r) => s + r.amount, 0);
     const billsTotal = scopedBills.reduce((s, b) => s + b.amount, 0);
-    const endingBalance = balance + allIncome - billsTotal;
+    const ending = endingBalance({
+      openingBalance: balance,
+      scopedIncome,
+      scopedBills,
+    });
 
     const buckets = new Map<string, DayBucket>();
     const ensure = (date: string): DayBucket => {
@@ -67,21 +53,16 @@ export function CashFlow() {
       return fresh;
     };
 
-    if (balance > 0) {
-      ensure(startIso).incomes.push({
-        id: 'opening',
-        periodId: activePeriodId,
-        source: 'Opening balance',
-        date: startIso,
-        amount: balance,
-        status: 'received',
-      });
+    const opening = openingBalanceEntry(balance, startIso);
+    if (opening) {
+      // Signed amount: negative overdraft flows through the running sum below.
+      ensure(opening.date).incomes.push({ source: opening.label, amount: opening.amount });
     }
-    for (const r of scopedIncome) ensure(r.date).incomes.push(r);
+    for (const r of scopedIncome) ensure(r.date).incomes.push({ source: r.source, amount: r.amount });
     for (const b of scopedBills) ensure(b.date).bills.push(b);
 
     const sortedDates = [...buckets.keys()].sort();
-    const todayIso = todayUtcKey();
+    const todayKey = todayIso();
 
     const timeline = sortedDates.reduce<TimelineDay[]>((acc, date) => {
       const bucket = buckets.get(date);
@@ -110,25 +91,23 @@ export function CashFlow() {
       const running = prev + dayIncomeTotal - dayBillTotal;
 
       acc.push({
-        date: parseUtc(date),
+        date: fromIso(date),
         income: headline ? { amount: headline.amount, label: headline.source } : undefined,
         items,
         runningBalance: running,
-        isToday: date === todayIso,
+        isToday: date === todayKey,
       });
       return acc;
     }, []);
 
     return {
-      dateRange: { start: parseUtc(startIso), end: parseUtc(endIso) },
-      user: { ...DEFAULT_USER },
       openingBalance: balance,
       allIncome,
       bills: billsTotal,
-      endingBalance,
+      endingBalance: ending,
       timeline,
     };
-  }, [balance, income, bills, activePeriodId, periods, range]);
+  }, [balance, income, bills, periods, range]);
 
   return <CashFlowPage {...pageProps} />;
 }

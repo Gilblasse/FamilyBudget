@@ -1,21 +1,21 @@
 import { NextResponse } from 'next/server';
 import { convertToModelMessages, streamText, stepCountIs, type UIMessage } from 'ai';
-import { z } from 'zod';
 import { SMART_MODEL, describeAiError, hasOpenAIKey } from '@/lib/ai/client';
 import { buildBudgetContext, contextAsPromptJson } from '@/lib/ai/context';
+import { budgetSnapshotSchema } from '@/lib/ai/schemas';
 import { budgetTools } from '@/lib/ai/tools';
+import { requireApiKey } from '@/lib/api-auth';
 import type { BudgetSnapshot } from '@/lib/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const snapshotSchema = z.custom<BudgetSnapshot>(
-  (v) => v && typeof v === 'object' && 'balance' in v && 'bills' in v,
-  'invalid snapshot',
-);
-
 const SYSTEM = (snapshotJson: string) => `You are the in-app assistant for a personal family-budget tool.
+
+The snapshot below is scoped to the user's currently selected date range, which may span one or more pay periods. Anchor your answers on \`dateRange.start\` and \`dateRange.end\` from the snapshot — not on calendar months or a single pay period. When the user says "this month" or similar, treat it as the selected range unless they explicitly ask about a different timeframe.
+
+Income may be recurring. \`recurringSources\` describes each repeating template (cadence is one of weekly, biweekly, semimonthly, monthly) with its anchor date and per-occurrence amount. \`expandedIncome\` lists every concrete occurrence already projected into the visible date range — use it for totals and for answering "when is the next paycheck" questions. \`income\` carries the source rows (templates + one-offs) and is for context, not for re-summing.
 
 Your job:
 - Answer questions about the user's budget directly using the snapshot below.
@@ -25,10 +25,13 @@ Your job:
 - Never invent ids. Always use ids from the snapshot.
 - If the snapshot does not contain enough information, ask a brief clarifying question.
 
-Active-period snapshot (JSON):
+Selected-range snapshot (JSON):
 ${snapshotJson}`;
 
 export async function POST(req: Request) {
+  const authError = requireApiKey(req);
+  if (authError) return authError;
+
   if (!hasOpenAIKey()) {
     return NextResponse.json({ error: 'AI is not configured' }, { status: 503 });
   }
@@ -43,7 +46,7 @@ export async function POST(req: Request) {
   if (!Array.isArray(body.messages)) {
     return NextResponse.json({ error: 'messages required' }, { status: 400 });
   }
-  const snapshot = snapshotSchema.safeParse(body.snapshot);
+  const snapshot = budgetSnapshotSchema.safeParse(body.snapshot);
   if (!snapshot.success) {
     return NextResponse.json({ error: 'snapshot required' }, { status: 400 });
   }

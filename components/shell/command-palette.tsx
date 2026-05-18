@@ -32,6 +32,8 @@ import {
   CommandShortcut,
 } from '@/components/ui/command';
 import { useBudget } from '@/lib/store';
+import { useEffectiveDateRange } from '@/lib/use-effective-range';
+import { visibleBills, visibleIncomeSources } from '@/lib/visibility';
 import { useAILauncher } from '@/components/budget/ai/ai-launcher-provider';
 import { fmt, fd } from '@/lib/format';
 
@@ -42,9 +44,9 @@ export function CommandPalette() {
   const { status: aiStatus, openAssistant } = useAILauncher();
   const income = useBudget((s) => s.income);
   const bills = useBudget((s) => s.bills);
-  const activePeriodId = useBudget((s) => s.activePeriodId);
   const addBill = useBudget((s) => s.addBill);
   const addIncome = useBudget((s) => s.addIncome);
+  const range = useEffectiveDateRange();
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -59,13 +61,13 @@ export function CommandPalette() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const periodIncome = useMemo(
-    () => income.filter((r) => r.periodId === activePeriodId).slice(0, 6),
-    [income, activePeriodId],
+  const recentIncome = useMemo(
+    () => visibleIncomeSources(income, range).slice(0, 6),
+    [income, range],
   );
-  const periodBills = useMemo(
-    () => bills.filter((b) => b.periodId === activePeriodId).slice(0, 6),
-    [bills, activePeriodId],
+  const recentBills = useMemo(
+    () => visibleBills(bills, range).slice(0, 6),
+    [bills, range],
   );
 
   function run(action: () => void) {
@@ -168,11 +170,11 @@ export function CommandPalette() {
           </CommandItem>
         </CommandGroup>
 
-        {periodIncome.length > 0 ? (
+        {recentIncome.length > 0 ? (
           <>
             <CommandSeparator />
             <CommandGroup heading="Income">
-              {periodIncome.map((r) => (
+              {recentIncome.map((r) => (
                 <CommandItem
                   key={r.id}
                   value={`income ${r.source} ${r.date} ${r.amount}`}
@@ -189,11 +191,11 @@ export function CommandPalette() {
           </>
         ) : null}
 
-        {periodBills.length > 0 ? (
+        {recentBills.length > 0 ? (
           <>
             <CommandSeparator />
             <CommandGroup heading="Bills">
-              {periodBills.map((b) => (
+              {recentBills.map((b) => (
                 <CommandItem
                   key={b.id}
                   value={`bill ${b.name} ${b.date} ${b.amount}`}

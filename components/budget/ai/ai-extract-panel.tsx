@@ -104,10 +104,8 @@ export function AiExtractPanel({
     let incomeCount = 0;
     for (const item of selected) {
       if (item.kind === 'bill') {
-        store.addBill();
-        const newBill = useBudget.getState().bills.at(-1);
-        if (!newBill) continue;
-        store.updateBill(newBill.id, {
+        const id = store.addBill();
+        store.updateBill(id, {
           name: item.name,
           date: item.date,
           amount: item.amount,
@@ -116,10 +114,8 @@ export function AiExtractPanel({
         });
         billCount += 1;
       } else {
-        store.addIncome();
-        const newIncome = useBudget.getState().income.at(-1);
-        if (!newIncome) continue;
-        store.updateIncome(newIncome.id, {
+        const id = store.addIncome();
+        store.updateIncome(id, {
           source: item.source,
           date: item.date,
           amount: item.amount,
@@ -128,6 +124,7 @@ export function AiExtractPanel({
         incomeCount += 1;
       }
     }
+    store.dedupeAll();
     toast.success(
       `Added ${billCount} bill${billCount === 1 ? '' : 's'}, ${incomeCount} income`,
     );

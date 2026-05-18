@@ -9,9 +9,19 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import dynamic from 'next/dynamic';
 import { toast } from 'sonner';
 import { useAIStatus } from '@/lib/ai/enabled';
-import { AiChatSheet, type AssistantView } from './ai-chat-sheet';
+import type { AssistantView } from './ai-chat-sheet';
+
+// Lazy-load the chat sheet so `@ai-sdk/openai`, `@ai-sdk/react`, and `ai`
+// only land in the bundle once AI is actually used. The sheet renders
+// nothing on mount until `open` flips true, so first-load cost is paid
+// at the moment of interaction, not at app start.
+const AiChatSheet = dynamic(
+  () => import('./ai-chat-sheet').then((m) => ({ default: m.AiChatSheet })),
+  { ssr: false },
+);
 
 interface AILauncherContextValue {
   status: ReturnType<typeof useAIStatus>;
@@ -80,11 +90,13 @@ export function AILauncherProvider({ children }: { children: ReactNode }) {
   return (
     <AILauncherContext.Provider value={value}>
       {children}
-      <AiChatSheet
-        open={assistantOpen}
-        onOpenChange={setAssistantOpen}
-        initialView={assistantInitialView}
-      />
+      {status === 'enabled' ? (
+        <AiChatSheet
+          open={assistantOpen}
+          onOpenChange={setAssistantOpen}
+          initialView={assistantInitialView}
+        />
+      ) : null}
     </AILauncherContext.Provider>
   );
 }

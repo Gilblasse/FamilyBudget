@@ -17,31 +17,67 @@ Personal irregular-income budget planner. Tracks income vs bills across a pay pe
 
 ```
 app/
-  layout.tsx          # ThemeProvider, TooltipProvider, Toaster, Geist fonts, metadata
-  page.tsx            # Thin server component → <BudgetApp />
-  globals.css         # Tailwind + shadcn tokens + app tokens (income, expense, warning, pri-*)
+  layout.tsx              # ThemeProvider, TooltipProvider, Toaster, Geist fonts, metadata
+  not-found.tsx           # Shell + EmptyState
+  globals.css             # Tailwind + shadcn tokens + app tokens (income, expense, warning, pri-*)
+  (app)/                  # Route group: every page renders inside the shell
+    layout.tsx            #   SidebarProvider + AppSidebar + AppHeader + BudgetSyncBoundary + CommandPalette
+    template.tsx          #   framer-motion page-change animation
+    page.tsx              #   Dashboard home
+    bills/                #   page.tsx → <BillsTable />            (+ loading.tsx)
+    cash-flow/            #   page.tsx → <CashFlow />              (+ loading.tsx)
+    income/               #   page.tsx → <IncomeTable />           (+ loading.tsx)
+    summary/              #   page.tsx → <Summary />               (+ loading.tsx)
+    trial-balance/        #   page.tsx → <TrialBalance />          (+ loading.tsx)
+    settings/             #   page.tsx → <SettingsView />          (no loading.tsx — TODO)
+    help-center/          #   page.tsx → <HelpCenterView />        (no loading.tsx — TODO)
+  api/
+    budget/route.ts       # GET/PUT envelope to Apps Script; auth + Zod schema + production-only writes
+    ai/{status,chat,advise,classify,extract}/route.ts
+
 components/
-  ui/                 # shadcn primitives — added via CLI, edit in place if needed
-  theme-provider.tsx  # next-themes wrapper
-  theme-toggle.tsx    # Light / Dark / System dropdown
-  budget/
-    budget-app.tsx    # Client root — composes BalanceCard + Tabs + DataControls
-    balance-card.tsx  # Current balance input
-    income-table.tsx  # Income CRUD + metrics
-    bills-table.tsx   # Bills CRUD with HTML5 drag reorder + metrics
-    cash-flow.tsx     # Day-by-day timeline, balance bars, running totals
-    trial-balance.tsx # Running ledger with paid/received toggles
-    summary.tsx       # Coverage check + priority-sorted table
-    data-controls.tsx # Import / Export / Reset (AlertDialog)
-    metric.tsx        # Small stat card primitive
-    priority-dot.tsx  # Colored dot by Priority
+  ui/                     # shadcn Base UI primitives — added via CLI, edit in place if needed
+  theme-provider.tsx      # next-themes wrapper
+  theme-toggle.tsx        # Light / Dark / System dropdown
+  shell/                  # AppSidebar, AppHeader, CommandPalette, BudgetSyncBoundary, SidebarSearch, SidebarDataCard
+  dashboard/              # BalanceOverviewCard, IncomeOverviewCard, ExpenseOverviewCard, MoneyFlowChart, CoverageCard, TransactionHistory, skeletons
+  settings/               # SettingsView (Data / Periods / Appearance / AI sections)
+  help-center/            # HelpCenterView
+  budget/                 # Feature components — tables, ledger, cash-flow, date-range-picker, ai/, etc.
+                          # NOTE: `balance-card.tsx` was deleted in Round 3; dashboard uses BalanceOverviewCard.
+
 lib/
-  store.ts            # Zustand store + persist (key: budget_v1, version: 1)
-  types.ts            # Income, Bill, PaidState, Priority, BillAction + label maps
-  format.ts           # fmt(), fd(), uid()
-  seed.ts             # DEFAULT_INCOME, DEFAULT_BILLS seed data
-  use-mounted.ts      # useSyncExternalStore-based SSR-safe mount flag
-  utils.ts            # cn() from shadcn
+  store.ts                # useBudget Zustand store + persist (key budget_v1, version STORE_VERSION); exports STORE_VERSION
+  ui-store.ts             # useUIStore — search, txFilter, txColumns (key dashboard.ui.v1)
+  saved-ranges-store.ts   # useSavedRanges — bookmarked date ranges (key dashboard.dateRange.savedRanges.v1)
+  types.ts                # Income, Bill, BudgetSnapshot, BudgetEnvelope, etc.
+  format.ts               # fmt(), fd(), fdRange(), uid()
+  date-utils.ts           # ISO date helpers (todayIso, addDaysIso, fromIso, …)
+  filters.ts              # inRange, filterByRange, clampRangeToPeriod
+  recurrence.ts           # expandAllIncome (weekly/biweekly/monthly/semimonthly)
+  visibility.ts           # visibleIncomeSources, visibleBills (range-first, period-agnostic)
+  dedupe.ts               # dedupeBills / dedupeIncome with paid-key remapping
+  sort.ts                 # SortState<TCol>, nextDir, dirFor, applySort
+  badges.ts               # actionVariant / incomeStatusVariant / priorityVariant (single source of truth)
+  tags.ts                 # normalizeTag, MAX_TAGS_PER_BILL, MAX_TAG_LENGTH (Bill.tags helpers)
+  derived.ts              # openingBalanceEntry, endingBalance, isReceivedIncome, isImportantBill, isActiveBill,
+                          # pendingIncomeCount, isPaid, criticalUnpaidBills, confirmedIncomeTotal
+  sync.ts                 # useBudgetSync — GET on mount, PUT on debounced state change (production writes only)
+  remote-sync-policy.ts   # canWriteRemote() — single source of truth for the production-only-writes rule
+  api-auth.ts             # requireApiKey() — Bearer-token guard for /api/budget and /api/ai/*
+  use-mounted.ts          # useSyncExternalStore-based SSR-safe mount flag
+  use-effective-range.ts  # derived date range hook (raw range ?? active period)
+  utils.ts                # cn() from shadcn
+  ai/                     # schemas.ts (Zod incl. budgetSnapshotSchema + budgetEnvelopeSchema), context.ts, tools.ts, client.ts
+
+hooks/
+  use-date-range.ts       # composed date-range hook
+  use-mobile.ts           # useIsMobile (≤767px)
+  use-narrow-viewport.ts  # useIsNarrowViewport (≤639px)
+
+apps-script/
+  Code.gs                 # Google Apps Script — single-cell envelope storage
+  README.md               # Setup + envelope + version-mismatch behavior + auth (query-string only)
 ```
 
 Keep feature code in `components/budget/`. Never put shadcn-modified primitives there — if a primitive needs changes, edit it in `components/ui/` directly (that is the shadcn pattern: you own the code).
@@ -54,6 +90,7 @@ Keep feature code in `components/budget/`. Never put shadcn-modified primitives 
 - **Dark mode is automatic.** `next-themes` with `attribute="class"` + `defaultTheme="system"`. Every color must resolve through tokens so dark mode works for free. Add a `.dark` variant for every new token.
 - **TypeScript strict.** No `any` without a `// TODO:` note and a reason. Prefer `unknown` + narrowing.
 - **This is real financial data.** Never silently drop fields on schema changes. Zustand `persist` has a `version` and `migrate` — use them.
+- **Remote sync is production-only for writes.** Reads from the Sheets/Apps Script backend are allowed in every environment so dev sessions can hydrate from real data. WRITES (POST/PUT to `/api/budget`, push from `lib/sync.ts`) only fire on Vercel production deployments. Dev / preview / test / local edits stay in Zustand + `localStorage` and never round-trip to Sheets. All environment decisions for this rule must route through `lib/remote-sync-policy.ts` (`canWriteRemote()`) — never inline `process.env.VERCEL_ENV` checks in feature code. Both the client (`lib/sync.ts`) and the server route (`app/api/budget/route.ts`) enforce the rule; the server is the backstop in case a future client bug or a manual `curl PUT` tries to bypass it.
 
 ## Base UI gotchas (we use Base UI, not Radix)
 
@@ -83,32 +120,106 @@ If a future task needs `asChild` ergonomics or AI Elements compatibility, switch
 
 ## Data model
 
-All state lives in a single Zustand store persisted to `localStorage` under key `budget_v1`:
+State is spread across **three** Zustand stores, each `persist`ed to localStorage. CLAUDE.md previously documented only the first.
+
+| Store | localStorage key | What it holds |
+|---|---|---|
+| `useBudget` (`lib/store.ts`) | `budget_v1` | Per-budget data (balance, income[], bills[], paid, periods[], activePeriodId, dateRange) **plus** a multi-budget slice (budgets[], activeBudgetId, budgetData{}). All 20+ mutation actions. Persist `version` = `STORE_VERSION` (exported), with a 7-step migration chain. |
+| `useUIStore` (`lib/ui-store.ts`) | `dashboard.ui.v1` | Cross-page UI prefs: searchQuery, txTypeFilter, txColumns. |
+| `useSavedRanges` (`lib/saved-ranges-store.ts`) | `dashboard.dateRange.savedRanges.v1` | Bookmarked date ranges (capped at 6). |
+
+Types live in `lib/types.ts`:
 
 ```ts
-type Income = { id: string; source: string; date: string; amount: number; status: 'expected'|'confirmed'|'pending'|'received' };
-type Bill   = { id: string; name: string; date: string; amount: number; priority: 'crit'|'imp'|'opt'|'flex'; action: 'pay-full'|'partial'|'delay'|'reduce'|'skip' };
-type PaidState = Record<string, boolean>; // keys: `inc_${id}` | `bill_${id}`
-
-interface BudgetState {
-  balance: number;
-  income: Income[];
-  bills: Bill[];
-  paid: PaidState;
-  // actions: setBalance, addIncome/updateIncome/removeIncome, addBill/updateBill/removeBill,
-  // reorderBill, togglePaid, importData, resetAll, exportJson
-}
+type Income          = { id; periodId; source; date; amount; status; cadence?; secondDay?; endDate? };
+type Bill            = { id; periodId; name; date; amount; priority; action; tags? };
+type IncomeOccurrence = { incomeId; periodId; source; amount; status; cadence; date; key; isRecurring };
+type PaidState        = Record<string, boolean>;
+type BudgetSnapshot   = { balance; income; bills; paid; periods; activePeriodId; dateRange };
 ```
 
-IDs: use `uid()` from `lib/format.ts` (wraps `crypto.randomUUID()`, falls back on non-browser envs). Dates: ISO strings (`YYYY-MM-DD`). Money: plain `number` in dollars (not cents — legacy parity with the prototype; revisit only if rounding bugs appear). Seed-data IDs use the `seed-*` prefix; never collide with those.
+IDs: use `uid()` from `lib/format.ts` (wraps `crypto.randomUUID()`, falls back). Dates: ISO `YYYY-MM-DD`. Money: plain `number` in dollars. Seed-data IDs use the `seed-*` prefix.
+
+### `Income.status` vs `paid[occKey]` — two independent axes
+
+Both exist on purpose; don't conflate them.
+
+- **`Income.status`** — `'expected' | 'confirmed' | 'pending' | 'received'`. Per-source *intent*: how confident the user is that this income source will land. Applies to every projected occurrence of a recurring source.
+- **`paid[occKey]`** — boolean per occurrence in `PaidState`. Per-occurrence *settlement*: did this specific paycheck actually clear? Keys are `inc_${incomeId}` for one-off and `inc_${incomeId}_${date}` for recurring occurrences (mirror for bills: `bill_${id}`).
+
+Dashboard "confirmed income" tiles read `status`. The Trial Balance ledger reads `paid[occKey]`. Migrations and renames must preserve both axes — never collapse one into the other.
 
 ### Derived values
 
-Never store computed totals. Derive inside selectors or memoized hooks (`useMemo` + narrow Zustand selectors). Examples: running balance, net position, coverage check, timeline grouping.
+Never store computed totals. Use the helpers in `lib/derived.ts` (or memoized selectors). `lib/badges.ts` is the single source of truth for badge variants; `lib/sort.ts` for table-sort scaffolding.
 
 ### Schema changes
 
-Bump `version` in the Zustand `persist` config and write a `migrate(persistedState, version)` branch. Never rename a field without a migration path.
+Bump `STORE_VERSION` in `lib/store.ts` and add a branch to the `migrate(persistedState, version)` chain. Never rename a field without a migration path. The bumped version automatically flows through `lib/sync.ts` → `/api/budget` PUT → Apps Script envelope, so older clients can't clobber data written by newer ones (Apps Script `doPost` returns 409 `stale schema` to a low-version writer).
+
+## Sync architecture
+
+Local-first. The app works fully offline against the three Zustand stores; remote sync is optional and gated.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Browser                                                         │
+│   useBudget ──→ useBudgetSync() (lib/sync.ts)                   │
+│                   ├─ GET /api/budget on mount                   │
+│                   └─ PUT /api/budget on debounced state change  │
+│                      (writes are PRODUCTION-ONLY)               │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ Bearer BUDGET_API_KEY
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Next.js /api/budget (Vercel)                                    │
+│   • requireApiKey()        (lib/api-auth.ts)                    │
+│   • canWriteRemote()       (lib/remote-sync-policy.ts) — PUT    │
+│   • budgetEnvelopeSchema   (lib/ai/schemas.ts) — Zod            │
+│   forwards { version, data } to Apps Script                     │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ ?token=SHEETS_WEBAPP_TOKEN  (query string only;
+                             │                              Apps Script can't read headers)
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Google Apps Script (Sheet1!A1)                                  │
+│   Cell stores { version, data, updatedAt }                      │
+│   doPost rejects stale writes (incoming.version < stored)       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Three layered guards on the write path** — always preserve all three when editing this stack:
+
+1. **Production-only writes.** `canWriteRemote()` in `lib/remote-sync-policy.ts`. Enforced in both `lib/sync.ts` (client) and `app/api/budget/route.ts` PUT (server). Reads are allowed in every environment so dev can hydrate from real data. Never inline `process.env.VERCEL_ENV` checks; always route through the helper.
+2. **Bearer-token auth.** `requireApiKey()` in `lib/api-auth.ts`. Reads `BUDGET_API_KEY` env var with a constant-time compare. If unset, auth is disabled (preserves localhost ergonomics) but a production deployment without `BUDGET_API_KEY` set logs a one-time warning. Applied to `/api/budget` GET+PUT and to `/api/ai/*` POST routes.
+3. **Schema versioning.** `STORE_VERSION` from `lib/store.ts` is threaded through the envelope (`{ version, data }`). Apps Script `doPost` returns HTTP 409 `stale schema` when an older client tries to overwrite a newer envelope. Client-side, `lib/sync.ts` skips the GET-side import when the remote envelope's `version > STORE_VERSION`.
+
+**Token nuance:** `SHEETS_WEBAPP_TOKEN` is the secret that the Next.js API route uses to call Apps Script (server↔Sheets). `BUDGET_API_KEY` is the secret the client uses to call the Next.js API route (browser↔server). They are different keys with different scopes.
+
+**Apps Script header limitation:** Google Apps Script Web Apps don't expose request headers to `doGet(e)` / `doPost(e)`. Auth must be in the query string. The Next.js route sends the token as both `?token=` and `Authorization: Bearer` so the header path lights up automatically if Google ever adds support.
+
+**Prebuild env check.** `scripts/check-env.mjs` runs as the `prebuild` npm-lifecycle hook. On Vercel production builds it fails fast (exit 1) when `BUDGET_API_KEY` is unset — the only env var without a graceful runtime fallback. Preview and local builds skip the check so contributors don't need the prod secret in their `.env.local`.
+
+## AI plugin layer
+
+AI features are **optional** and **lazy-loaded**. The user-visible default is "AI disabled," and the heavy `@ai-sdk/openai`, `@ai-sdk/react`, and `ai` packages only land in the bundle once AI is actually invoked.
+
+Three layers (in order from cheapest to render-time-most-expensive):
+
+1. **`useAILauncher().status`** (`components/budget/ai/ai-launcher-provider.tsx`) — Boolean-ish state machine: `'unknown' | 'enabled' | 'disabled'`. Resolves async via `/api/ai/status`. Use `useMounted()` to gate any SSR-sensitive rendering that depends on this (or you'll get a hydration mismatch — see the AI section of `settings-view.tsx` for the pattern).
+2. **`<AiBoundary>`** (`components/budget/ai/ai-boundary.tsx`) — Wraps children, renders them only when `status === 'enabled'`. Pass `fallback` for a non-null disabled state. This is the **only** way feature code should gate "is AI on?" rendering — don't inline `aiStatus === 'enabled'` ternaries.
+3. **`next/dynamic({ ssr: false })`** — `AiChatSheet`, `AiExtractDialog`, and `AiSuggestButton` are imported via `next/dynamic` at three call sites: `ai-launcher-provider.tsx`, `data-controls.tsx`, and `bills-table.tsx`. Combined with `<AiBoundary>`, this means the chunks aren't fetched at all until AI is enabled.
+
+When adding a new AI surface: define it under `components/budget/ai/`, dynamic-import it at the consumer, and wrap the consumer in `<AiBoundary>`.
+
+## Tag conventions
+
+`Bill.tags?: string[]` was added in v8. Normalization rules live in `lib/tags.ts`:
+
+- All tag writes go through `normalizeTag(raw)` — trim + lowercase.
+- A bill can carry at most `MAX_TAGS_PER_BILL` (10) tags of at most `MAX_TAG_LENGTH` (24) characters each.
+- The `'subscription'` tag is meaningful: bills with it bucket under the collapsible "Subscriptions" group in the bills table. Other tag values are user-driven and have no current behavior beyond display.
+- Migrations: any future `Bill` field change that interacts with tags must preserve the existing array. The v8 migration auto-tagged existing bills with `'subscription'` based on a `name.includes(...)` heuristic — that heuristic is no longer used at runtime (it's only documented as the seed of the migration).
 
 ## Conventions
 
@@ -124,13 +235,14 @@ Bump `version` in the Zustand `persist` config and write a `migrate(persistedSta
 
 Before claiming a change is done:
 
-1. `npx tsc --noEmit` and `pnpm lint` clean.
-2. `pnpm build` succeeds.
-3. `pnpm dev` and exercise the golden path in a real browser: enter balance → add income → add bill → reorder bills by drag → toggle paid in Trial Balance → confirm Cash Flow + Summary + Trial Balance all update.
-4. Reload. All state (balance, bill order, paid toggles, theme) must survive.
-5. Toggle theme light↔dark. Every surface must have readable contrast — no hardcoded colors leaking through.
-6. Export JSON, reset, re-import. Lossless round-trip.
-7. If you cannot open a browser, say so explicitly. Never fake UI verification. Playwright MCP tools are available — prefer them over curl-only smoke tests for any UI change.
+1. `pnpm test` — vitest must be fully green. New pure logic in `lib/` gets a `*.test.ts` next to it.
+2. `npx tsc --noEmit` and `pnpm lint` clean.
+3. `pnpm build` succeeds.
+4. `pnpm dev` and exercise the golden path in a real browser: enter balance → add income → add bill → reorder bills by drag → toggle paid in Trial Balance → confirm Cash Flow + Summary + Trial Balance + Dashboard all update **and agree** on totals (especially with `balance ∈ {-100, 0, +100}` — see the opening-balance invariant in `lib/derived.ts`).
+5. Reload. All state (balance, bill order, paid toggles, theme, saved ranges) must survive.
+6. Toggle theme light↔dark. Every surface must have readable contrast — no hardcoded colors leaking through.
+7. Export JSON, reset, re-import. Lossless round-trip.
+8. If you cannot open a browser, say so explicitly. Never fake UI verification. Playwright MCP tools are available — prefer them over curl-only smoke tests for any UI change.
 
 ## Agent usage
 

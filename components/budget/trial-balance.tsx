@@ -19,6 +19,9 @@ import { fmt, fd, fdRange } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
 import { inRange } from '@/lib/filters';
+import { expandAllIncome } from '@/lib/recurrence';
+import { openingBalanceEntry } from '@/lib/derived';
+import { todayIso } from '@/lib/date-utils';
 
 interface Entry {
   key: string;
@@ -43,36 +46,46 @@ export function TrialBalance() {
   const range = useEffectiveDateRange();
 
   const { totals, groupsByDate, openingDate } = useMemo(() => {
-    const scopedIncome = income.filter(
-      (r) => r.periodId === activePeriodId && inRange(r.date, range),
-    );
-    const scopedBills = bills.filter(
-      (b) => b.periodId === activePeriodId && inRange(b.date, range),
-    );
+    const scopedIncome = expandAllIncome(income, range);
+    const scopedBills = bills.filter((b) => inRange(b.date, range));
     const activePeriod = periods.find((p) => p.id === activePeriodId);
-    const openingDate = range?.start ?? activePeriod?.startDate ?? '2026-04-09';
+    const openingDate = range?.start ?? activePeriod?.startDate ?? todayIso();
 
     const list: Entry[] = [];
-    if (balance > 0) {
-      list.push({
-        key: 'open',
-        date: openingDate,
-        label: 'Opening bank balance',
-        amount: balance,
-        type: 'inc',
-        paid: true,
-        isOpening: true,
-      });
+    const opening = openingBalanceEntry(balance, openingDate);
+    if (opening) {
+      if (opening.amount > 0) {
+        list.push({
+          key: 'open',
+          date: opening.date,
+          label: opening.label,
+          amount: opening.amount,
+          type: 'inc',
+          paid: true,
+          isOpening: true,
+        });
+      } else {
+        // Overdraft starts the ledger in the red — render as a paid expense so
+        // the running balance opens below zero and the row contributes to "out".
+        list.push({
+          key: 'open',
+          date: opening.date,
+          label: opening.label,
+          amount: Math.abs(opening.amount),
+          type: 'exp',
+          paid: true,
+          isOpening: true,
+        });
+      }
     }
     for (const r of scopedIncome) {
-      const key = `inc_${r.id}`;
       list.push({
-        key,
+        key: r.key,
         date: r.date,
         label: r.source,
         amount: r.amount,
         type: 'inc',
-        paid: !!paid[key],
+        paid: !!paid[r.key],
         note: r.status === 'pending' ? 'pending' : undefined,
       });
     }
@@ -268,9 +281,18 @@ export function TrialBalance() {
                         <Button
                           size="sm"
                           variant="secondary"
+                          aria-pressed={r.paid}
+                          aria-label={`${r.paid ? 'Unmark' : 'Mark'} ${
+                            isInc ? 'received' : 'paid'
+                          } · ${r.label}`}
                           onClick={() => handleToggle(r.key, r.label, r.type, r.paid)}
-                          className="h-10 w-full"
+                          className={cn(
+                            'h-10 w-full',
+                            r.paid &&
+                              'bg-success-50 text-success-700 hover:bg-success-100 dark:bg-success-100 dark:text-success-800',
+                          )}
                         >
+                          {r.paid && <Check className="size-3.5" aria-hidden />}
                           {r.paid
                             ? isInc
                               ? 'Received'
@@ -359,18 +381,29 @@ function RowGroup({
             <TableCell>
               {r.isOpening ? (
                 <Badge size="sm" variant="success">Opening</Badge>
-              ) : r.paid ? (
-                <Badge size="sm" variant="success">
-                  <Check className="size-3" /> {isInc ? 'Received' : 'Paid'}
-                </Badge>
               ) : (
                 <Button
                   size="sm"
                   variant="secondary"
-                  className="h-7 rounded-full px-2.5 text-[11px]"
+                  aria-pressed={r.paid}
+                  aria-label={`${r.paid ? 'Unmark' : 'Mark'} ${
+                    isInc ? 'received' : 'paid'
+                  } · ${r.label}`}
+                  className={cn(
+                    'h-7 rounded-full px-2.5 text-[11px]',
+                    r.paid &&
+                      'bg-success-50 text-success-700 hover:bg-success-100 dark:bg-success-100 dark:text-success-800',
+                  )}
                   onClick={() => onToggle(r.key, r.label, r.type, r.paid)}
                 >
-                  {isInc ? 'Mark received' : 'Mark paid'}
+                  {r.paid && <Check className="size-3" aria-hidden />}
+                  {r.paid
+                    ? isInc
+                      ? 'Received'
+                      : 'Paid'
+                    : isInc
+                    ? 'Mark received'
+                    : 'Mark paid'}
                 </Button>
               )}
             </TableCell>

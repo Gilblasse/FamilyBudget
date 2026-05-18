@@ -18,16 +18,15 @@ import {
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { useDateRange } from '@/hooks/use-date-range';
 import { useIsNarrowViewport } from '@/hooks/use-narrow-viewport';
-import { clampRangeToPeriod } from '@/lib/filters';
 import { fdRange } from '@/lib/format';
 import {
   addDaysIso,
-  clampIso,
   fromIso,
   rangesEqual,
   toIso,
   todayIso,
 } from '@/lib/date-utils';
+import { applyRangeClick } from '@/lib/range-update';
 import { useMounted } from '@/lib/use-mounted';
 import { cn } from '@/lib/utils';
 import type { SavedRange } from '@/lib/saved-ranges-store';
@@ -50,9 +49,7 @@ export interface DateRangePickerProps {
   className?: string;
 }
 
-function buildDefaultPresets(
-  period: BudgetPeriod,
-): DateRangePresetOption[] {
+function buildDefaultPresets(): DateRangePresetOption[] {
   return [
     {
       id: 'full-period',
@@ -63,8 +60,8 @@ function buildDefaultPresets(
       id: 'last-7',
       label: 'Last 7 days',
       compute: () => {
-        const end = clampIso(todayIso(), period.startDate, period.endDate);
-        const start = clampIso(addDaysIso(end, -6), period.startDate, period.endDate);
+        const end = todayIso();
+        const start = addDaysIso(end, -6);
         return { start, end };
       },
     },
@@ -72,19 +69,12 @@ function buildDefaultPresets(
       id: 'next-7',
       label: 'Next 7 days',
       compute: () => {
-        const start = clampIso(todayIso(), period.startDate, period.endDate);
-        const end = clampIso(addDaysIso(start, 6), period.startDate, period.endDate);
+        const start = todayIso();
+        const end = addDaysIso(start, 6);
         return { start, end };
       },
     },
   ];
-}
-
-function rangeOverlapsPeriod(
-  range: { start: string; end: string },
-  period: BudgetPeriod,
-): boolean {
-  return range.end >= period.startDate && range.start <= period.endDate;
 }
 
 export function DateRangePicker({
@@ -103,18 +93,21 @@ export function DateRangePicker({
 
   if (!activePeriod || !value) return null;
 
-  const effectivePresets = presets ?? buildDefaultPresets(activePeriod);
+  const effectivePresets = presets ?? buildDefaultPresets();
   const label = fdRange(value.start, value.end);
 
-  const handleCalendarSelect = (
-    range: { from?: Date; to?: Date } | undefined,
-  ) => {
-    if (!range?.from) return;
-    const start = toIso(range.from);
-    const end = range.to ? toIso(range.to) : start;
-    const next: DateRange = { start, end };
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+  };
+
+  // Single-click interpretation: each click is authoritative. Clicks before
+  // the current start move start; clicks after end move end; clicks inside
+  // collapse to a single-day range. This avoids react-day-picker's range
+  // mode treating "click before start" as the from of a brand-new range.
+  const handleCalendarSelect = (day: Date | undefined) => {
+    if (!day) return;
+    const next = applyRangeClick(value, toIso(day));
     onChange(next);
-    if (!range.to) return;
     setOpen(false);
     const isFullPeriod =
       next.start === activePeriod.startDate &&
@@ -128,12 +121,7 @@ export function DateRangePicker({
   };
 
   const handleApplySaved = (saved: SavedRange) => {
-    const clamped = clampRangeToPeriod(
-      { start: saved.start, end: saved.end },
-      activePeriod,
-    );
-    if (!clamped) return;
-    onChange(clamped);
+    onChange({ start: saved.start, end: saved.end });
     setOpen(false);
   };
 
@@ -150,14 +138,13 @@ export function DateRangePicker({
       aria-label={`Select date range, currently ${label}`}
     >
       <CalendarIcon className="size-3.5 text-muted-foreground" aria-hidden />
-      <span>{label}</span>
+      <span className="hidden sm:inline">{label}</span>
     </Button>
   );
 
   const panel = (
     <PanelContent
       value={value}
-      activePeriod={activePeriod}
       savedRanges={savedRanges}
       mounted={mounted}
       presets={effectivePresets}
@@ -170,7 +157,7 @@ export function DateRangePicker({
 
   if (isNarrow) {
     return (
-      <Sheet open={open} onOpenChange={setOpen}>
+      <Sheet open={open} onOpenChange={handleOpenChange}>
         <SheetTrigger render={trigger} />
         <SheetContent
           side="bottom"
@@ -185,12 +172,12 @@ export function DateRangePicker({
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger render={trigger} />
       <PopoverContent
         align="end"
         sideOffset={8}
-        className="w-auto rounded-lg p-0 ring-1 ring-foreground/10"
+        className="w-72 rounded-lg p-0 ring-1 ring-foreground/10"
         role="dialog"
         aria-label="Date range picker"
       >
@@ -202,11 +189,10 @@ export function DateRangePicker({
 
 interface PanelContentProps {
   value: DateRange;
-  activePeriod: BudgetPeriod;
   savedRanges: SavedRange[];
   mounted: boolean;
   presets: DateRangePresetOption[];
-  onCalendarSelect: (range: { from?: Date; to?: Date } | undefined) => void;
+  onCalendarSelect: (day: Date | undefined) => void;
   onApplySaved: (saved: SavedRange) => void;
   onRemoveSavedRange: (id: string) => void;
   onPreset: (preset: DateRangePresetOption) => void;
@@ -214,7 +200,6 @@ interface PanelContentProps {
 
 function PanelContent({
   value,
-  activePeriod,
   savedRanges,
   mounted,
   presets,
@@ -223,24 +208,40 @@ function PanelContent({
   onRemoveSavedRange,
   onPreset,
 }: PanelContentProps) {
+  // Running in single-pick mode, but reuse react-day-picker's range_* modifier
+  // slots so the existing calendar.tsx range styling still shades the active
+  // window. Each click is interpreted by `applyRangeClick` upstream.
+  const rangeModifiers = useMemo(() => {
+    const startIso = value.start;
+    const endIso = value.end;
+    return {
+      range_start: (d: Date) => toIso(d) === startIso,
+      range_end: (d: Date) => toIso(d) === endIso,
+      range_middle: (d: Date) => {
+        const iso = toIso(d);
+        return iso > startIso && iso < endIso;
+      },
+    };
+  }, [value.start, value.end]);
+
   return (
     <div className="flex flex-col">
       <Calendar
-        mode="range"
-        selected={{ from: fromIso(value.start), to: fromIso(value.end) }}
+        mode="single"
+        selected={fromIso(value.start)}
         onSelect={onCalendarSelect}
+        modifiers={rangeModifiers}
         numberOfMonths={1}
         defaultMonth={fromIso(value.start)}
-        disabled={{
-          before: fromIso(activePeriod.startDate),
-          after: fromIso(activePeriod.endDate),
-        }}
       />
+      <p className="px-3 pb-1.5 text-[11px] text-muted-foreground">
+        Click a day before the start to move the start, after the end to move
+        the end, or inside to set a new single day.
+      </p>
       {mounted ? (
         <SavedRangesList
           ranges={savedRanges}
           activeValue={value}
-          activePeriod={activePeriod}
           onApply={onApplySaved}
           onRemove={onRemoveSavedRange}
         />
@@ -271,7 +272,6 @@ function PanelContent({
 interface SavedRangesListProps {
   ranges: SavedRange[];
   activeValue: DateRange;
-  activePeriod: BudgetPeriod;
   onApply: (saved: SavedRange) => void;
   onRemove: (id: string) => void;
 }
@@ -279,7 +279,6 @@ interface SavedRangesListProps {
 function SavedRangesList({
   ranges,
   activeValue,
-  activePeriod,
   onApply,
   onRemove,
 }: SavedRangesListProps) {
@@ -288,22 +287,19 @@ function SavedRangesList({
   const rows = useMemo(
     () =>
       ranges.map((r) => {
-        const inBounds = rangeOverlapsPeriod(r, activePeriod);
         const isActive = rangesEqual(
           { start: r.start, end: r.end },
           activeValue,
         );
-        return { saved: r, inBounds, isActive };
+        return { saved: r, isActive };
       }),
-    [ranges, activePeriod, activeValue],
+    [ranges, activeValue],
   );
 
-  const defaultFocusId = useMemo(() => {
-    const active = rows.find((r) => r.isActive && r.inBounds);
-    if (active) return active.saved.id;
-    const firstInBounds = rows.find((r) => r.inBounds);
-    return firstInBounds?.saved.id ?? rows[0]?.saved.id ?? null;
-  }, [rows]);
+  const defaultFocusId = useMemo(
+    () => rows.find((r) => r.isActive)?.saved.id ?? rows[0]?.saved.id ?? null,
+    [rows],
+  );
 
   const [focusedId, setFocusedId] = useState<string | null>(null);
 
@@ -349,10 +345,6 @@ function SavedRangesList({
       return;
     }
     if (e.key === 'Enter' || e.key === ' ') {
-      if (!row.inBounds) {
-        e.preventDefault();
-        return;
-      }
       e.preventDefault();
       onApply(row.saved);
       return;
@@ -389,15 +381,11 @@ function SavedRangesList({
             data-row-id={row.saved.id}
             role="option"
             aria-selected={row.isActive}
-            aria-disabled={!row.inBounds}
             tabIndex={isFocusTarget ? 0 : -1}
             onFocus={() => setFocusedId(row.saved.id)}
-            onClick={row.inBounds ? () => onApply(row.saved) : undefined}
+            onClick={() => onApply(row.saved)}
             onKeyDown={(e) => handleRowKeyDown(e, row)}
-            className={cn(
-              'group flex cursor-pointer items-center justify-between px-3 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
-              !row.inBounds && 'cursor-not-allowed opacity-40',
-            )}
+            className="group flex cursor-pointer items-center justify-between px-3 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           >
             <span
               className={cn(

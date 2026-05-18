@@ -1,6 +1,7 @@
 'use client';
 
 import type { CSSProperties } from 'react';
+import { toIso } from '@/lib/date-utils';
 
 export type TxnKind = 'bill' | 'variable' | 'income' | 'info';
 
@@ -44,9 +45,10 @@ function nodeColor(day: TimelineDay): string {
   return 'bg-slate-400';
 }
 
-function dayKey(d: Date): string {
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-}
+// Local-time formatter to match `fromIso` upstream in cash-flow.tsx and
+// `todayIso` everywhere else. UTC getters here would re-introduce the DST
+// drift the deep-dive flagged.
+const dayKey = toIso;
 
 export default function CashFlowTimeline({ days, lowBalanceThreshold = 200 }: CashFlowTimelineProps) {
   return (

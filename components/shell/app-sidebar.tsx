@@ -31,8 +31,11 @@ import {
 import { useBudget } from '@/lib/store';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
 import { inRange } from '@/lib/filters';
+import { expandAllIncome } from '@/lib/recurrence';
+import { pendingIncomeCount } from '@/lib/derived';
 import { SidebarSearch } from './sidebar-search';
 import { SidebarDataCard } from './sidebar-data-card';
+import { SidebarBudgetSwitcher } from './sidebar-budget-switcher';
 import { Badge } from '@/components/ui/badge';
 
 interface NavItem {
@@ -49,28 +52,23 @@ export function AppSidebar() {
   const income = useBudget((s) => s.income);
   const bills = useBudget((s) => s.bills);
   const paid = useBudget((s) => s.paid);
-  const activePeriodId = useBudget((s) => s.activePeriodId);
   const range = useEffectiveDateRange();
 
   const { pendingIncome, unpaidImportant, untoggled } = useMemo(() => {
-    const periodIncome = income.filter(
-      (r) => r.periodId === activePeriodId && inRange(r.date, range),
-    );
-    const periodBills = bills.filter(
-      (b) => b.periodId === activePeriodId && inRange(b.date, range),
-    );
-    const pendingIncome = periodIncome.filter((r) => r.status === 'pending').length;
-    const unpaidImportant = periodBills.filter(
+    const scopedIncome = expandAllIncome(income, range);
+    const scopedBills = bills.filter((b) => inRange(b.date, range));
+    const pendingIncome = pendingIncomeCount(scopedIncome);
+    const unpaidImportant = scopedBills.filter(
       (b) => (b.priority === 'crit' || b.priority === 'imp') && !paid[`bill_${b.id}`],
     ).length;
-    const untoggledIncome = periodIncome.filter((r) => !paid[`inc_${r.id}`]).length;
-    const untoggledBills = periodBills.filter((b) => !paid[`bill_${b.id}`]).length;
+    const untoggledIncome = scopedIncome.filter((r) => !paid[r.key]).length;
+    const untoggledBills = scopedBills.filter((b) => !paid[`bill_${b.id}`]).length;
     return {
       pendingIncome,
       unpaidImportant,
       untoggled: untoggledIncome + untoggledBills,
     };
-  }, [income, bills, paid, activePeriodId, range]);
+  }, [income, bills, paid, range]);
 
   const menuItems: NavItem[] = [
     { label: 'Dashboard', href: '/', icon: LayoutDashboard },
@@ -163,6 +161,9 @@ export function AppSidebar() {
             <span className="group-data-[collapsible=icon]:hidden">Family Budget</span>
           </Link>
           <SidebarTrigger className="size-8 text-foreground/80 hover:text-foreground group-data-[collapsible=icon]:size-7" />
+        </div>
+        <div className="group-data-[collapsible=icon]:hidden">
+          <SidebarBudgetSwitcher />
         </div>
         <div className="group-data-[collapsible=icon]:hidden">
           <SidebarSearch />
