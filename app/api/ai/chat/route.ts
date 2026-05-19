@@ -4,7 +4,6 @@ import { SMART_MODEL, describeAiError, hasOpenAIKey } from '@/lib/ai/client';
 import { buildBudgetContext, contextAsPromptJson } from '@/lib/ai/context';
 import { budgetSnapshotSchema } from '@/lib/ai/schemas';
 import { budgetTools } from '@/lib/ai/tools';
-import { requireApiKey } from '@/lib/api-auth';
 import type { BudgetSnapshot } from '@/lib/types';
 
 export const runtime = 'nodejs';
@@ -29,9 +28,6 @@ Selected-range snapshot (JSON):
 ${snapshotJson}`;
 
 export async function POST(req: Request) {
-  const authError = requireApiKey(req);
-  if (authError) return authError;
-
   if (!hasOpenAIKey()) {
     return NextResponse.json({ error: 'AI is not configured' }, { status: 503 });
   }

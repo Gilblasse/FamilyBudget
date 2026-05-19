@@ -3,7 +3,6 @@ import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { FAST_MODEL, describeAiError, hasOpenAIKey } from '@/lib/ai/client';
 import { classifyResponseSchema } from '@/lib/ai/schemas';
-import { requireApiKey } from '@/lib/api-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -33,9 +32,6 @@ ACTION values:
 Default to "pay-full" for crit/imp. Default to "reduce" or "skip" for opt/flex unless context suggests otherwise. Keep the rationale to one short sentence.`;
 
 export async function POST(req: Request) {
-  const authError = requireApiKey(req);
-  if (authError) return authError;
-
   if (!hasOpenAIKey()) {
     return NextResponse.json({ error: 'AI is not configured' }, { status: 503 });
   }

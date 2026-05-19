@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from 'next/font/google';
 import { ThemeProvider } from '@/components/theme-provider';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
+import { QueryProvider } from '@/components/providers/query-provider';
+import { isRemotePrimary } from '@/lib/remote-mode';
 import './globals.css';
 
 const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] });
@@ -22,6 +24,9 @@ export const viewport: Viewport = {
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  // Wrap with QueryProvider only when remote-primary mode is on, so
+  // TanStack Query stays out of the bundle when it isn't needed.
+  const tree = isRemotePrimary() ? <QueryProvider>{children}</QueryProvider> : children;
   return (
     <html
       lang="en"
@@ -30,7 +35,7 @@ export default function RootLayout({
     >
       <body className="min-h-full bg-background text-foreground">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-          <TooltipProvider delay={150}>{children}</TooltipProvider>
+          <TooltipProvider delay={150}>{tree}</TooltipProvider>
           <Toaster richColors position="bottom-right" />
         </ThemeProvider>
       </body>

@@ -60,7 +60,7 @@ export interface DateRange {
   end: string;
 }
 
-export interface BudgetSnapshot {
+export interface BudgetData {
   balance: number;
   income: Income[];
   bills: Bill[];
@@ -75,6 +75,21 @@ export interface BudgetMeta {
   name: string;
   createdAt: string;
   defaultRange: DateRange;
+}
+
+/**
+ * On-wire envelope. The multi-budget slice was local-only through v8;
+ * v9 promotes it so remote-primary mode owns the whole portfolio.
+ *
+ * The multi-budget fields are optional here on purpose: the legacy
+ * `lib/sync.ts` debounced PUT continues to send only the active-budget
+ * slice (byte-identical to today), and any v8 client read from the cell
+ * will lack the fields. Remote-primary mode always emits all three.
+ */
+export interface BudgetSnapshot extends BudgetData {
+  budgets?: BudgetMeta[];
+  activeBudgetId?: string;
+  budgetData?: Record<string, BudgetData>;
 }
 
 export const PRIORITY_LABEL: Record<Priority, string> = {

@@ -17,6 +17,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { useBudget } from '@/lib/store';
+import { budgetSnapshotSchema } from '@/lib/ai/schemas';
 import { AiBoundary } from './ai/ai-boundary';
 import { AiConfigNotice } from './ai/ai-config-notice';
 
@@ -70,29 +71,24 @@ export function useImportBudget() {
           const reader = new FileReader();
           reader.onload = (ev) => {
             try {
-              const parsed = JSON.parse(String(ev.target?.result ?? ''));
-              if (
-                !parsed ||
-                typeof parsed !== 'object' ||
-                !Array.isArray(parsed.income) ||
-                !Array.isArray(parsed.bills)
-              ) {
+              const raw = JSON.parse(String(ev.target?.result ?? ''));
+              // budgetSnapshotSchema validates the full multi-budget shape
+              // with the optional `budgets`/`activeBudgetId`/`budgetData`
+              // fields. Legacy single-budget exports (no multi-budget keys)
+              // still pass because those fields are optional.
+              const result = budgetSnapshotSchema.safeParse(raw);
+              if (!result.success) {
                 toast.error('Import failed — not a valid budget export.');
                 return;
               }
-              importData({
-                balance: typeof parsed.balance === 'number' ? parsed.balance : 0,
-                income: parsed.income,
-                bills: parsed.bills,
-                paid: parsed.paid ?? {},
-                periods: Array.isArray(parsed.periods) ? parsed.periods : undefined,
-                activePeriodId:
-                  typeof parsed.activePeriodId === 'string'
-                    ? parsed.activePeriodId
-                    : undefined,
-              });
+              const data = result.data;
+              importData(data);
+              const budgetsExtra =
+                data.budgets && data.budgets.length > 1
+                  ? `, ${data.budgets.length} budgets`
+                  : '';
               toast.success(
-                `Imported · ${parsed.income.length} income, ${parsed.bills.length} bills`,
+                `Imported · ${data.income.length} income, ${data.bills.length} bills${budgetsExtra}`,
               );
             } catch (err) {
               toast.error(`Import failed: ${(err as Error).message}`);

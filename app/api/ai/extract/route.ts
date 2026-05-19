@@ -3,7 +3,6 @@ import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { FAST_MODEL, describeAiError, hasOpenAIKey } from '@/lib/ai/client';
 import { extractResponseSchema } from '@/lib/ai/schemas';
-import { requireApiKey } from '@/lib/api-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -38,9 +37,6 @@ Amounts are positive numbers in dollars. Strip $ and commas. If a range is given
 Return only items you can confidently extract. Skip ambiguous lines.`;
 
 export async function POST(req: Request) {
-  const authError = requireApiKey(req);
-  if (authError) return authError;
-
   if (!hasOpenAIKey()) {
     return NextResponse.json({ error: 'AI is not configured' }, { status: 503 });
   }

@@ -3,9 +3,12 @@
 import { useEffect, useRef } from 'react';
 import { STORE_VERSION, useBudget } from './store';
 import { canWriteRemote, REMOTE_WRITE_DISABLED_REASON } from './remote-sync-policy';
+import { isRemotePrimaryClient } from './remote-mode';
 import type { BudgetSnapshot } from './types';
 
 const DEBOUNCE_MS = 1500;
+
+let warnedNoop = false;
 
 interface RemoteEnvelope {
   version: number | null;
@@ -29,11 +32,21 @@ async function pushRemote(data: BudgetSnapshot): Promise<void> {
 }
 
 export function useBudgetSync() {
+  // Hooks must run unconditionally for stable order across renders. The
+  // remote-primary check moves INSIDE each effect's body — when on, the
+  // effect is a no-op; when off, today's behavior is preserved verbatim.
   const hydrated = useRef(false);
   const pushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const warnedDisabled = useRef(false);
 
   useEffect(() => {
+    if (isRemotePrimaryClient()) {
+      if (!warnedNoop) {
+        warnedNoop = true;
+        console.info('[remote-primary] useBudgetSync no-op — TanStack Query owns sync');
+      }
+      return;
+    }
     let cancelled = false;
 
     (async () => {
@@ -65,6 +78,7 @@ export function useBudgetSync() {
   }, []);
 
   useEffect(() => {
+    if (isRemotePrimaryClient()) return;
     const unsub = useBudget.subscribe((state, prev) => {
       if (!hydrated.current) return;
       if (
