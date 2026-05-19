@@ -2,7 +2,16 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { Bill, BudgetMeta, BudgetPeriod, DateRange, Income, PaidState } from './types';
+import type {
+  Bill,
+  BudgetData,
+  BudgetMeta,
+  BudgetPeriod,
+  BudgetSnapshot,
+  DateRange,
+  Income,
+  PaidState,
+} from './types';
 import {
   DEFAULT_BILLS,
   DEFAULT_BUDGETS,
@@ -14,23 +23,22 @@ import {
 import { addDaysIso, todayIso } from './date-utils';
 import { dedupeBills, dedupeIncome } from './dedupe';
 import { uid } from './format';
+import { isRemotePrimaryClient } from './remote-mode';
 
 /**
  * Persisted store schema version. Bump when adding a migration branch.
  * Shared with `lib/sync.ts` so the remote envelope carries the same
  * version, and Apps Script can reject stale writes from older clients.
+ *
+ * v9: multi-budget slice (`budgets`, `activeBudgetId`, `budgetData`) is
+ * promoted to the on-wire envelope shape for remote-primary mode. The
+ * fields already lived on persisted local state since v4, so the v9
+ * migration branch is a no-op marker. The bump is what triggers the
+ * Apps Script 409 stale-schema guard for older clients.
  */
-export const STORE_VERSION = 8;
+export const STORE_VERSION = 9;
 
-export interface BudgetData {
-  balance: number;
-  income: Income[];
-  bills: Bill[];
-  paid: PaidState;
-  periods: BudgetPeriod[];
-  activePeriodId: string;
-  dateRange: DateRange | null;
-}
+export type { BudgetData };
 
 export interface MultiBudgetSlice {
   budgets: BudgetMeta[];
@@ -60,7 +68,7 @@ interface BudgetActions {
   removePeriod: (id: string) => void;
   setDateRange: (range: DateRange | null) => void;
   resetDateRange: () => void;
-  importData: (data: Partial<BudgetData>) => void;
+  importData: (data: Partial<BudgetSnapshot>) => void;
   resetAll: () => void;
   exportJson: () => string;
   addBudget: (name: string, range?: DateRange | null) => string;
@@ -225,6 +233,18 @@ export function migrateBudgetState(
         if (!isSubscription) return b;
         return { ...b, tags: [...(b.tags ?? []), 'subscription'] };
       }),
+    };
+  }
+  if (fromVersion < 9) {
+    // v9 promotes the multi-budget slice to the on-wire envelope. Local
+    // persisted state has already carried these fields since v4, so this
+    // branch only patches them with defaults when an unusual partial v8
+    // dump is missing them. Apps Script enforces the version bump via 409.
+    s = {
+      ...s,
+      budgets: s.budgets ?? [],
+      activeBudgetId: s.activeBudgetId ?? DEFAULT_BUDGET_ID,
+      budgetData: s.budgetData ?? {},
     };
   }
   return s as BudgetData & MultiBudgetSlice;
@@ -395,6 +415,9 @@ export const useBudget = create<BudgetState>()(
 
       importData: (data) =>
         set((s) => {
+          // Active-slice import (the legacy path — used by single-budget
+          // JSON exports and by lib/sync.ts when the remote envelope only
+          // carries the active slice).
           const nextActive = data.activePeriodId ?? s.activePeriodId;
           const nextPeriods = data.periods ?? s.periods;
           const fallbackPeriodId = nextPeriods.some((p) => p.id === nextActive)
@@ -411,7 +434,7 @@ export const useBudget = create<BudgetState>()(
           const incomingPaid = data.paid ?? s.paid;
           const billResult = dedupeBills(coerceBills(data.bills), incomingPaid);
           const incomeResult = dedupeIncome(coerceIncome(data.income), billResult.paid);
-          return {
+          const activeSlice = {
             balance: data.balance ?? s.balance,
             income: incomeResult.rows,
             bills: billResult.rows,
@@ -420,14 +443,52 @@ export const useBudget = create<BudgetState>()(
             activePeriodId: fallbackPeriodId,
             dateRange: data.dateRange ?? null,
           };
+
+          // If the import carries the multi-budget envelope (modern
+          // exports), replace `budgets` / `activeBudgetId` / `budgetData`
+          // too. Otherwise we keep the existing multi-budget state — the
+          // legacy single-budget shape only restores the active slice.
+          const hasMultiBudget =
+            Array.isArray(data.budgets) || data.activeBudgetId !== undefined || data.budgetData !== undefined;
+          if (!hasMultiBudget) return activeSlice;
+
+          const nextBudgets = data.budgets ?? s.budgets;
+          const nextActiveBudgetId =
+            data.activeBudgetId && nextBudgets.some((b) => b.id === data.activeBudgetId)
+              ? data.activeBudgetId
+              : nextBudgets[0]?.id ?? s.activeBudgetId;
+          const nextBudgetData = data.budgetData ?? s.budgetData;
+          return {
+            ...activeSlice,
+            budgets: nextBudgets,
+            activeBudgetId: nextActiveBudgetId,
+            budgetData: nextBudgetData,
+          };
         }),
 
       resetAll: () => set(freshDefaultData()),
 
       exportJson: () => {
-        const { balance, income, bills, paid, periods, activePeriodId, dateRange } = get();
+        const s = get();
+        // Includes the multi-budget envelope so users with several budgets
+        // round-trip losslessly. `version` is the persisted schema version
+        // so future migrations can detect older exports. Legacy importers
+        // ignore unknown keys, so this shape stays back-compat for tools
+        // that only know the active-slice format.
         return JSON.stringify(
-          { balance, income, bills, paid, periods, activePeriodId, dateRange },
+          {
+            version: STORE_VERSION,
+            balance: s.balance,
+            income: s.income,
+            bills: s.bills,
+            paid: s.paid,
+            periods: s.periods,
+            activePeriodId: s.activePeriodId,
+            dateRange: s.dateRange,
+            budgets: s.budgets,
+            activeBudgetId: s.activeBudgetId,
+            budgetData: s.budgetData,
+          },
           null,
           2,
         );
@@ -549,18 +610,25 @@ export const useBudget = create<BudgetState>()(
       name: 'budget_v1',
       version: STORE_VERSION,
       storage: createJSONStorage(() => localStorage),
-      partialize: (s) => ({
-        balance: s.balance,
-        income: s.income,
-        bills: s.bills,
-        paid: s.paid,
-        periods: s.periods,
-        activePeriodId: s.activePeriodId,
-        dateRange: s.dateRange,
-        budgets: s.budgets,
-        activeBudgetId: s.activeBudgetId,
-        budgetData: s.budgetData,
-      }),
+      // Remote-primary mode treats Zustand as a memory-only cache of the
+      // server's truth. Returning {} stops writes to localStorage while
+      // still letting rehydrate read existing local state on first load
+      // (so the migration modal can offer to upload it).
+      partialize: (s) =>
+        isRemotePrimaryClient()
+          ? {}
+          : {
+              balance: s.balance,
+              income: s.income,
+              bills: s.bills,
+              paid: s.paid,
+              periods: s.periods,
+              activePeriodId: s.activePeriodId,
+              dateRange: s.dateRange,
+              budgets: s.budgets,
+              activeBudgetId: s.activeBudgetId,
+              budgetData: s.budgetData,
+            },
       migrate: (raw, fromVersion) => migrateBudgetState(raw, fromVersion),
     }
   )

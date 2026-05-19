@@ -44,7 +44,7 @@ function expectV8Shape(s: BudgetData & MultiBudgetSlice) {
 
 describe('migrateBudgetState — version chain', () => {
   it('STORE_VERSION is the latest migration target', () => {
-    expect(STORE_VERSION).toBe(8);
+    expect(STORE_VERSION).toBe(9);
   });
 
   it('v1 → v8: empty state hydrates into the canonical shape', () => {

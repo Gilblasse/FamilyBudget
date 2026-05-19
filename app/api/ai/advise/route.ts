@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { SMART_MODEL, describeAiError, hasOpenAIKey } from '@/lib/ai/client';
 import { adviseResponseSchema, budgetSnapshotSchema } from '@/lib/ai/schemas';
 import { buildBudgetContext, contextAsPromptJson } from '@/lib/ai/context';
-import { requireApiKey } from '@/lib/api-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,9 +29,6 @@ Rules:
 - If the budget is already healthy, return an empty recommendations list and a short positive summary.`;
 
 export async function POST(req: Request) {
-  const authError = requireApiKey(req);
-  if (authError) return authError;
-
   if (!hasOpenAIKey()) {
     return NextResponse.json({ error: 'AI is not configured' }, { status: 503 });
   }

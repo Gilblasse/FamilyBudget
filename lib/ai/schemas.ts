@@ -63,14 +63,44 @@ export const dateRangeSchema = z.object({
   end: isoDateSchema,
 });
 
+/**
+ * Per-budget data slice. Matches `BudgetData` in `lib/types.ts`.
+ * Extracted so the v9 envelope can reuse it for the `budgetData` map.
+ */
+export const budgetDataSchema = z.object({
+  balance: z.number(),
+  income: z.array(incomeSchema),
+  bills: z.array(billSchema),
+  paid: z.record(z.string(), z.boolean()),
+  periods: z.array(budgetPeriodSchema),
+  activePeriodId: z.string(),
+  dateRange: dateRangeSchema.nullable(),
+});
+
+export const budgetMetaSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  createdAt: z.string().min(1),
+  defaultRange: dateRangeSchema,
+});
+
+/**
+ * Canonical v9 on-wire snapshot. Multi-budget fields are optional on the
+ * wire so legacy v8 clients (and the local-first debounced PUT, which
+ * still sends only the active-budget slice) round-trip without breaking
+ * Zod parsing.
+ */
 export const budgetSnapshotSchema = z.object({
   balance: z.number(),
   income: z.array(incomeSchema),
   bills: z.array(billSchema),
   paid: z.record(z.string(), z.boolean()),
   periods: z.array(budgetPeriodSchema),
-  activePeriodId: z.string().min(1),
+  activePeriodId: z.string(),
   dateRange: dateRangeSchema.nullable(),
+  budgets: z.array(budgetMetaSchema).optional(),
+  activeBudgetId: z.string().optional(),
+  budgetData: z.record(z.string(), budgetDataSchema).optional(),
 }) satisfies z.ZodType<BudgetSnapshot>;
 
 /**
@@ -110,14 +140,18 @@ export const incomeProposalSchema = z.object({
   status: statusSchema,
 });
 
-export const proposalSchema = z.discriminatedUnion('kind', [
-  billProposalSchema,
-  incomeProposalSchema,
-]);
+// OpenAI's structured outputs (response_format) reject `oneOf`, which is what
+// z.discriminatedUnion emits in Zod 4's JSON Schema. A plain z.union emits
+// `anyOf`, which OpenAI accepts. The TS inferred type is still the same
+// discriminated shape, so callers can keep narrowing by `kind`.
+export const proposalSchema = z.union([billProposalSchema, incomeProposalSchema]);
 
+// OpenAI strict structured outputs require every property to be listed in
+// `required`; optional fields fail validation. Keep `notes` as a plain
+// (possibly empty) string instead of optional.
 export const extractResponseSchema = z.object({
   items: z.array(proposalSchema),
-  notes: z.string().optional(),
+  notes: z.string(),
 });
 
 export const adviseRecommendationSchema = z.object({

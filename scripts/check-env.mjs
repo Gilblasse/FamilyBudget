@@ -1,26 +1,19 @@
 #!/usr/bin/env node
-// Pre-build env check. Runs as the `prebuild` npm lifecycle hook, so
-// `next build` aborts when a Vercel **production** deployment is
-// missing a secret that would otherwise leak a security hole into the
-// running app:
+// Pre-build env check. Runs as the `prebuild` npm lifecycle hook. Fires
+// only on real production deploys (VERCEL_ENV=production) and requires
+// the Supabase server-side credentials to be present — otherwise every
+// per-entity /api/budget/* request would 502.
 //
-//   • BUDGET_API_KEY — without it, /api/budget GET/PUT and /api/ai/*
-//     accept any anonymous request. The AI endpoints in particular
-//     become a free OpenAI-cost firehose for bad actors.
-//
-// Non-production builds (local dev, Vercel preview, CI) skip the check
-// so contributors don't need the prod secret in their .env.local.
-//
-// See CLAUDE.md → "Sync architecture" for the three-layer guard model.
+// Local dev / Vercel preview / CI skip the check so contributors don't
+// need production secrets in .env.local.
 
-const VERCEL_ENV = process.env.VERCEL_ENV;
-const IS_PROD = VERCEL_ENV === 'production';
+const IS_PROD_DEPLOY = process.env.VERCEL_ENV === 'production';
 
-if (!IS_PROD) {
+if (!IS_PROD_DEPLOY) {
   process.exit(0);
 }
 
-const required = ['BUDGET_API_KEY'];
+const required = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
 const missing = required.filter((key) => {
   const value = process.env[key];
   return !value || value.length === 0;
@@ -29,14 +22,14 @@ const missing = required.filter((key) => {
 if (missing.length > 0) {
   console.error('');
   console.error('━━━ ENV CHECK FAILED ━━━');
-  console.error('This production deployment is missing required secrets:');
+  console.error('Production deploy (VERCEL_ENV=production) is missing required env vars:');
   for (const key of missing) console.error(`  • ${key}`);
   console.error('');
-  console.error('Set them via `vercel env add <key> production` or in the');
-  console.error('Vercel dashboard, then redeploy. Without them, /api/budget');
-  console.error('and /api/ai/* are open to anonymous reads/writes.');
+  console.error('Install the Supabase Vercel Marketplace integration, or set');
+  console.error('them manually via `vercel env add <key> production`, then');
+  console.error('redeploy.');
   console.error('');
   process.exit(1);
 }
 
-console.log(`[check-env] ${required.length} required production secret(s) present.`);
+console.log(`[check-env] ${required.length} required env var(s) present.`);

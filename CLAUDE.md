@@ -32,7 +32,7 @@ app/
     settings/             #   page.tsx → <SettingsView />          (no loading.tsx — TODO)
     help-center/          #   page.tsx → <HelpCenterView />        (no loading.tsx — TODO)
   api/
-    budget/route.ts       # GET/PUT envelope to Apps Script; auth + Zod schema + production-only writes
+    budget/route.ts       # GET/PUT envelope to Supabase; Zod schema + production-only writes
     ai/{status,chat,advise,classify,extract}/route.ts
 
 components/
@@ -64,7 +64,7 @@ lib/
                           # pendingIncomeCount, isPaid, criticalUnpaidBills, confirmedIncomeTotal
   sync.ts                 # useBudgetSync — GET on mount, PUT on debounced state change (production writes only)
   remote-sync-policy.ts   # canWriteRemote() — single source of truth for the production-only-writes rule
-  api-auth.ts             # requireApiKey() — Bearer-token guard for /api/budget and /api/ai/*
+  # (no bearer-auth layer — same-origin browser fetch is the trust boundary)
   use-mounted.ts          # useSyncExternalStore-based SSR-safe mount flag
   use-effective-range.ts  # derived date range hook (raw range ?? active period)
   utils.ts                # cn() from shadcn
@@ -75,9 +75,14 @@ hooks/
   use-mobile.ts           # useIsMobile (≤767px)
   use-narrow-viewport.ts  # useIsNarrowViewport (≤639px)
 
-apps-script/
-  Code.gs                 # Google Apps Script — single-cell envelope storage
-  README.md               # Setup + envelope + version-mismatch behavior + auth (query-string only)
+supabase/
+  migrations/
+    0001_initial.sql      # Relational schema + replace_budget_snapshot RPC
+
+lib/supabase/
+  server.ts               # Server-only client (service-role key)
+  envelope.ts             # loadEnvelope / saveEnvelope (used by /api/budget)
+  actions.ts              # Per-entity ops (used by lib/api/route-helpers.ts)
 ```
 
 Keep feature code in `components/budget/`. Never put shadcn-modified primitives there — if a primitive needs changes, edit it in `components/ui/` directly (that is the shadcn pattern: you own the code).
@@ -90,7 +95,10 @@ Keep feature code in `components/budget/`. Never put shadcn-modified primitives 
 - **Dark mode is automatic.** `next-themes` with `attribute="class"` + `defaultTheme="system"`. Every color must resolve through tokens so dark mode works for free. Add a `.dark` variant for every new token.
 - **TypeScript strict.** No `any` without a `// TODO:` note and a reason. Prefer `unknown` + narrowing.
 - **This is real financial data.** Never silently drop fields on schema changes. Zustand `persist` has a `version` and `migrate` — use them.
-- **Remote sync is production-only for writes.** Reads from the Sheets/Apps Script backend are allowed in every environment so dev sessions can hydrate from real data. WRITES (POST/PUT to `/api/budget`, push from `lib/sync.ts`) only fire on Vercel production deployments. Dev / preview / test / local edits stay in Zustand + `localStorage` and never round-trip to Sheets. All environment decisions for this rule must route through `lib/remote-sync-policy.ts` (`canWriteRemote()`) — never inline `process.env.VERCEL_ENV` checks in feature code. Both the client (`lib/sync.ts`) and the server route (`app/api/budget/route.ts`) enforce the rule; the server is the backstop in case a future client bug or a manual `curl PUT` tries to bypass it.
+- **Remote-primary mode is driven by Supabase credentials being present.** When both `SUPABASE_URL` (or the `NEXT_PUBLIC_SUPABASE_URL` fallback) and `SUPABASE_SERVICE_ROLE_KEY` are set, `isRemotePrimary()` in `lib/remote-mode.ts` returns true: the per-entity REST endpoints under `/api/budget/{income,bills,periods,budgets,paid,meta}` accept writes, the `lib/remote/store-bridge.ts` projects the Supabase envelope into `useBudget`, and `useBudgetSync()` is a no-op. When the credentials are missing, behavior is byte-identical to local-first (Zustand + `localStorage`), and per-entity routes return 503 `remote-disabled`. Never check `process.env.SUPABASE_*` directly in feature code — always import `isRemotePrimary()` (server) or `isRemotePrimaryClient()` (client).
+- **`canWriteRemote()` is the legacy snapshot PUT guard.** Lives in `lib/remote-sync-policy.ts`. Returns true when `isRemotePrimary()` is true OR when `VERCEL_ENV=production` (defense in depth — if a prod deploy ever loses its Supabase keys, the legacy `lib/sync.ts` debounced PUT short-circuits cleanly with `{ skipped: true }` instead of 502ing through `app/api/budget/route.ts`). Reads from Supabase are always allowed when the credentials are present; the gate only controls writes via the whole-snapshot PUT path.
+- **Whole-snapshot writes go through `replace_budget_snapshot` (PL/pgSQL RPC).** The function locks `app_meta FOR UPDATE`, enforces the stale-schema guard, cascades-deletes existing rows, and re-inserts the payload — all in one transaction. Per-entity writes (POST/PATCH/DELETE under `/api/budget/{income,bills,…}`) are single SQL statements and so atomic on their own. The `SUPABASE_SERVICE_ROLE_KEY` must never be imported into a client module; `lib/supabase/server.ts` is the single server-only entry point.
+- **Use `pnpm dev` exclusively for local work.** Never run `pnpm build && pnpm start` against the repo locally. Reason: `.env.development.local` (which points at the local Supabase stack via `npx supabase start`) is loaded ONLY in dev mode. `pnpm start` ignores it and falls back to `.env.local`, which holds the live-prod Supabase credentials — so a "production" run locally would silently write to the real database. `pnpm dev` is the only command that's safe by default. If you genuinely need to test a production build, do it on a Vercel preview deploy, not locally.
 
 ## Base UI gotchas (we use Base UI, not Radix)
 
@@ -155,7 +163,7 @@ Never store computed totals. Use the helpers in `lib/derived.ts` (or memoized se
 
 ### Schema changes
 
-Bump `STORE_VERSION` in `lib/store.ts` and add a branch to the `migrate(persistedState, version)` chain. Never rename a field without a migration path. The bumped version automatically flows through `lib/sync.ts` → `/api/budget` PUT → Apps Script envelope, so older clients can't clobber data written by newer ones (Apps Script `doPost` returns 409 `stale schema` to a low-version writer).
+Bump `STORE_VERSION` in `lib/store.ts` and add a branch to the `migrate(persistedState, version)` chain. Never rename a field without a migration path. The bumped version automatically flows through `lib/sync.ts` → `/api/budget` PUT → `replace_budget_snapshot` RPC, so older clients can't clobber data written by newer ones (the RPC raises `'stale schema'` with errcode `P0001`, mapped to HTTP 409 by `lib/api/route-helpers.ts`).
 
 ## Sync architecture
 
@@ -169,36 +177,33 @@ Local-first. The app works fully offline against the three Zustand stores; remot
 │                   └─ PUT /api/budget on debounced state change  │
 │                      (writes are PRODUCTION-ONLY)               │
 └────────────────────────────┬────────────────────────────────────┘
-                             │ Bearer BUDGET_API_KEY
+                             │ same-origin fetch (no bearer token)
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │ Next.js /api/budget (Vercel)                                    │
-│   • requireApiKey()        (lib/api-auth.ts)                    │
 │   • canWriteRemote()       (lib/remote-sync-policy.ts) — PUT    │
 │   • budgetEnvelopeSchema   (lib/ai/schemas.ts) — Zod            │
-│   forwards { version, data } to Apps Script                     │
+│   • lib/supabase/envelope.ts → loadEnvelope / saveEnvelope      │
 └────────────────────────────┬────────────────────────────────────┘
-                             │ ?token=SHEETS_WEBAPP_TOKEN  (query string only;
-                             │                              Apps Script can't read headers)
+                             │ supabase-js + SUPABASE_SERVICE_ROLE_KEY
+                             │ (server-only; never bundled into the client)
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ Google Apps Script (Sheet1!A1)                                  │
-│   Cell stores { version, data, updatedAt }                      │
-│   doPost rejects stale writes (incoming.version < stored)       │
+│ Supabase Postgres                                               │
+│   Tables: budgets, periods, income, bills, paid_state, app_meta │
+│   RPC: replace_budget_snapshot(payload jsonb)                   │
+│   raises 'stale schema' (P0001) on incoming.version < stored    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Three layered guards on the write path** — always preserve all three when editing this stack:
+**Two layered guards on the write path** — always preserve both when editing this stack:
 
 1. **Production-only writes.** `canWriteRemote()` in `lib/remote-sync-policy.ts`. Enforced in both `lib/sync.ts` (client) and `app/api/budget/route.ts` PUT (server). Reads are allowed in every environment so dev can hydrate from real data. Never inline `process.env.VERCEL_ENV` checks; always route through the helper.
-2. **Bearer-token auth.** `requireApiKey()` in `lib/api-auth.ts`. Reads `BUDGET_API_KEY` env var with a constant-time compare. If unset, auth is disabled (preserves localhost ergonomics) but a production deployment without `BUDGET_API_KEY` set logs a one-time warning. Applied to `/api/budget` GET+PUT and to `/api/ai/*` POST routes.
-3. **Schema versioning.** `STORE_VERSION` from `lib/store.ts` is threaded through the envelope (`{ version, data }`). Apps Script `doPost` returns HTTP 409 `stale schema` when an older client tries to overwrite a newer envelope. Client-side, `lib/sync.ts` skips the GET-side import when the remote envelope's `version > STORE_VERSION`.
+2. **Schema versioning.** `STORE_VERSION` from `lib/store.ts` is threaded through the envelope (`{ version, data }`) and mirrored in `app_meta.store_version`. `replace_budget_snapshot` raises `'stale schema'` (errcode `P0001`) when an older client tries to overwrite a newer envelope; the route layer maps that to HTTP 409. Client-side, `lib/sync.ts` skips the GET-side import when the remote envelope's `version > STORE_VERSION`.
 
-**Token nuance:** `SHEETS_WEBAPP_TOKEN` is the secret that the Next.js API route uses to call Apps Script (server↔Sheets). `BUDGET_API_KEY` is the secret the client uses to call the Next.js API route (browser↔server). They are different keys with different scopes.
+**Trust boundary:** the browser↔Next.js hop is protected by same-origin fetch (no bearer secret). The server↔Supabase hop is gated by `SUPABASE_SERVICE_ROLE_KEY` (read inside `lib/supabase/server.ts`); the key is server-only and never inlined into client bundles.
 
-**Apps Script header limitation:** Google Apps Script Web Apps don't expose request headers to `doGet(e)` / `doPost(e)`. Auth must be in the query string. The Next.js route sends the token as both `?token=` and `Authorization: Bearer` so the header path lights up automatically if Google ever adds support.
-
-**Prebuild env check.** `scripts/check-env.mjs` runs as the `prebuild` npm-lifecycle hook. On Vercel production builds it fails fast (exit 1) when `BUDGET_API_KEY` is unset — the only env var without a graceful runtime fallback. Preview and local builds skip the check so contributors don't need the prod secret in their `.env.local`.
+**Prebuild env check.** `scripts/check-env.mjs` runs as the `prebuild` npm-lifecycle hook. On real production deploys (`VERCEL_ENV=production`) it fails fast (exit 1) if `SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` is unset — without those keys every per-entity request would 502. Local builds and Vercel previews skip the check so contributors don't need production secrets locally.
 
 ## AI plugin layer
 

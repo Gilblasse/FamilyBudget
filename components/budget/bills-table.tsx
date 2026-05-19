@@ -187,9 +187,13 @@ export function BillsTable() {
     setOverId(null);
   }
 
-  function handleRemove(r: Bill) {
+  async function handleRemove(r: Bill) {
     const snapshot: Bill = { ...r };
-    removeBill(r.id);
+    const result = await Promise.resolve(removeBill(r.id));
+    if (isRemoteMutationFailure(result)) {
+      toast.error(`Could not delete "${snapshot.name}" from cloud data`);
+      return;
+    }
     toast.success(`Removed "${snapshot.name}"`, {
       action: {
         label: 'Undo',
@@ -554,6 +558,15 @@ export function BillsTable() {
   );
 }
 
+function isRemoteMutationFailure(value: unknown): value is { error: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'error' in value &&
+    (value as { error?: unknown }).error === 'remote mutation failed'
+  );
+}
+
 function BillCard({
   bill,
   prevId,
@@ -568,7 +581,7 @@ function BillCard({
   nextId: string | null;
   isSorted: boolean;
   onUpdate: (id: string, patch: Partial<Bill>) => void;
-  onRemove: (b: Bill) => void;
+  onRemove: (b: Bill) => void | Promise<void>;
   onReorder: (from: string, to: string) => void;
 }) {
   const canMoveUp = !isSorted && prevId !== null;
@@ -777,7 +790,7 @@ function DeleteBillButton({
   iconClassName,
 }: {
   bill: Bill;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
   className?: string;
   iconClassName?: string;
 }) {
