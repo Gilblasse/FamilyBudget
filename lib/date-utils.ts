@@ -22,6 +22,16 @@ export function addDaysIso(iso: string, days: number): string {
   return toIso(d);
 }
 
+/**
+ * Signed integer day count from `a` to `b` (both ISO `YYYY-MM-DD`).
+ * Positive when `b` is later. Rounds after dividing by ms-per-day so DST
+ * transitions (23h or 25h days) don't shift the result.
+ */
+export function daysBetween(a: string, b: string): number {
+  const ms = fromIso(b).getTime() - fromIso(a).getTime();
+  return Math.round(ms / 86400000);
+}
+
 export function clampIso(d: string, min: string, max: string): string {
   if (d < min) return min;
   if (d > max) return max;

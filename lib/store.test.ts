@@ -131,3 +131,120 @@ describe('exportJson / importData round-trip', () => {
     expect(parsed.version).toBe(STORE_VERSION);
   });
 });
+
+describe('addBudget date shifting', () => {
+  async function seedRows() {
+    const { useBudget } = await import('./store');
+    useBudget.setState({
+      income: [
+        {
+          id: 'src-i1',
+          periodId: 'seed-period-1',
+          source: 'Paycheck',
+          date: '2026-04-15',
+          amount: 1000,
+          status: 'expected',
+          cadence: 'once',
+        },
+        {
+          id: 'src-i2',
+          periodId: 'seed-period-1',
+          source: 'Side gig',
+          date: '2026-04-20',
+          amount: 250,
+          status: 'expected',
+          cadence: 'monthly',
+          endDate: '2026-12-31',
+        },
+      ],
+      bills: [
+        {
+          id: 'src-b1',
+          periodId: 'seed-period-1',
+          name: 'Rent',
+          date: '2026-05-01',
+          amount: 1500,
+          priority: 'crit',
+          action: 'pay-full',
+        },
+        {
+          id: 'src-b2',
+          periodId: 'seed-period-1',
+          name: 'Groceries',
+          date: '2026-04-22',
+          amount: 400,
+          priority: 'crit',
+          action: 'pay-full',
+        },
+      ],
+    });
+  }
+
+  it('shifts every income and bill date by the active→new range delta', async () => {
+    const { useBudget } = await import('./store');
+    await seedRows();
+    // Source active period is 2026-04-09..05-14. New range 30 days later.
+    useBudget.getState().addBudget('Next month', {
+      start: '2026-05-09',
+      end: '2026-06-14',
+    });
+    const s = useBudget.getState();
+    const paycheck = s.income.find((r) => r.source === 'Paycheck');
+    const sideGig = s.income.find((r) => r.source === 'Side gig');
+    const rent = s.bills.find((b) => b.name === 'Rent');
+    const groceries = s.bills.find((b) => b.name === 'Groceries');
+    expect(paycheck?.date).toBe('2026-05-15');
+    expect(sideGig?.date).toBe('2026-05-20');
+    expect(sideGig?.endDate).toBe('2027-01-30');
+    expect(rent?.date).toBe('2026-05-31');
+    expect(groceries?.date).toBe('2026-05-22');
+  });
+
+  it('is a no-op when the new range matches the active period', async () => {
+    const { useBudget } = await import('./store');
+    await seedRows();
+    useBudget.getState().addBudget('Clone', {
+      start: '2026-04-09',
+      end: '2026-05-14',
+    });
+    const s = useBudget.getState();
+    expect(s.income.find((r) => r.source === 'Paycheck')?.date).toBe('2026-04-15');
+    expect(s.income.find((r) => r.source === 'Side gig')?.endDate).toBe('2026-12-31');
+    expect(s.bills.find((b) => b.name === 'Rent')?.date).toBe('2026-05-01');
+  });
+
+  it('does not shift when no range is provided', async () => {
+    const { useBudget } = await import('./store');
+    await seedRows();
+    useBudget.getState().addBudget('Clone no range');
+    const s = useBudget.getState();
+    expect(s.income.find((r) => r.source === 'Paycheck')?.date).toBe('2026-04-15');
+    expect(s.bills.find((b) => b.name === 'Rent')?.date).toBe('2026-05-01');
+  });
+
+  it('shifts backwards when the new range is earlier', async () => {
+    const { useBudget } = await import('./store');
+    await seedRows();
+    useBudget.getState().addBudget('Previous month', {
+      start: '2026-03-09',
+      end: '2026-04-08',
+    });
+    const s = useBudget.getState();
+    expect(s.income.find((r) => r.source === 'Paycheck')?.date).toBe('2026-03-15');
+    expect(s.bills.find((b) => b.name === 'Rent')?.date).toBe('2026-03-31');
+  });
+
+  it('leaves the source budget unchanged after the shift', async () => {
+    const { useBudget } = await import('./store');
+    await seedRows();
+    const sourceId = useBudget.getState().activeBudgetId;
+    useBudget.getState().addBudget('Forked', {
+      start: '2026-05-09',
+      end: '2026-06-14',
+    });
+    const archived = useBudget.getState().budgetData[sourceId];
+    expect(archived).toBeDefined();
+    expect(archived.income.find((r) => r.source === 'Paycheck')?.date).toBe('2026-04-15');
+    expect(archived.bills.find((b) => b.name === 'Rent')?.date).toBe('2026-05-01');
+  });
+});

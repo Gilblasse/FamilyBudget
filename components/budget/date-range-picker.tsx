@@ -7,7 +7,7 @@ import {
   useState,
   type KeyboardEvent,
 } from 'react';
-import { Calendar as CalendarIcon, Trash2 } from 'lucide-react';
+import { Calendar as CalendarIcon, RotateCcw, Trash2, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import {
@@ -18,6 +18,7 @@ import {
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { useDateRange } from '@/hooks/use-date-range';
 import { useIsNarrowViewport } from '@/hooks/use-narrow-viewport';
+import { useBudget } from '@/lib/store';
 import { fdRange } from '@/lib/format';
 import {
   addDaysIso,
@@ -35,6 +36,8 @@ import type { BudgetPeriod, DateRange } from '@/lib/types';
 export interface DateRangePresetOption {
   id: string;
   label: string;
+  /** When set, the preset chip renders icon-only; `label` becomes the aria-label and tooltip. */
+  icon?: LucideIcon;
   compute: () => DateRange | null;
 }
 
@@ -253,17 +256,22 @@ function PanelContent({
         role="group"
         aria-label="Presets"
       >
-        {presets.map((p) => (
-          <Button
-            key={p.id}
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-xs"
-            onClick={() => onPreset(p)}
-          >
-            {p.label}
-          </Button>
-        ))}
+        {presets.map((p) => {
+          const Icon = p.icon;
+          return (
+            <Button
+              key={p.id}
+              variant="ghost"
+              size="sm"
+              className={cn('h-7 text-xs', Icon ? 'w-7 px-0' : 'px-2')}
+              aria-label={p.label}
+              title={p.label}
+              onClick={() => onPreset(p)}
+            >
+              {Icon ? <Icon className="size-3.5" aria-hidden /> : p.label}
+            </Button>
+          );
+        })}
       </div>
     </div>
   );
@@ -423,6 +431,48 @@ export function HeaderDateRangePicker() {
     removeSavedRange,
   } = useDateRange();
 
+  // The active budget's defaultRange — what setActiveBudget restores on
+  // workspace switch. Surfaced as a one-click "Workspace default" preset.
+  const workspaceDefault = useBudget((s) =>
+    s.budgets.find((b) => b.id === s.activeBudgetId)?.defaultRange,
+  );
+
+  const presets = useMemo<DateRangePresetOption[]>(() => {
+    const out: DateRangePresetOption[] = [];
+    if (workspaceDefault) {
+      out.push({
+        id: 'workspace-default',
+        label: 'Reset to workspace default',
+        icon: RotateCcw,
+        compute: () => workspaceDefault,
+      });
+    }
+    out.push(
+      {
+        id: 'full-period',
+        label: 'Full period',
+        compute: () => null,
+      },
+      {
+        id: 'last-7',
+        label: 'Last 7 days',
+        compute: () => {
+          const end = todayIso();
+          return { start: addDaysIso(end, -6), end };
+        },
+      },
+      {
+        id: 'next-7',
+        label: 'Next 7 days',
+        compute: () => {
+          const start = todayIso();
+          return { start, end: addDaysIso(start, 6) };
+        },
+      },
+    );
+    return out;
+  }, [workspaceDefault]);
+
   return (
     <DateRangePicker
       value={effective}
@@ -431,6 +481,7 @@ export function HeaderDateRangePicker() {
       savedRanges={savedRanges}
       onSaveRange={addSavedRange}
       onRemoveSavedRange={removeSavedRange}
+      presets={presets}
     />
   );
 }
