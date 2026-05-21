@@ -13,6 +13,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { effectivePlanned } from '@/lib/derived';
 import { HeroAmount, OverviewCard } from './overview-card';
 
 const TOOLTIP_MAX_ROWS = 5;
@@ -25,20 +26,20 @@ export function ExpenseOverviewCard() {
 
   const stats = useMemo(() => {
     const scoped = bills.filter((b) => inRange(b.date, range));
-    const total = scoped.reduce((s, b) => s + b.amount, 0);
+    const total = scoped.reduce((s, b) => s + effectivePlanned(b), 0);
     const paidTotal = scoped
       .filter((b) => paid[`bill_${b.id}`])
-      .reduce((s, b) => s + b.amount, 0);
+      .reduce((s, b) => s + effectivePlanned(b), 0);
     const paidPct = total > 0 ? Math.min(paidTotal / total, 1) : 0;
 
     const critScoped = scoped.filter((b) => b.priority === 'crit');
     const unpaidCrit = critScoped
       .filter((b) => !paid[`bill_${b.id}`])
       .sort((a, b) => a.date.localeCompare(b.date));
-    const unpaidCritTotal = unpaidCrit.reduce((s, b) => s + b.amount, 0);
+    const unpaidCritTotal = unpaidCrit.reduce((s, b) => s + effectivePlanned(b), 0);
     const critPaidTotal = critScoped
       .filter((b) => paid[`bill_${b.id}`])
-      .reduce((s, b) => s + b.amount, 0);
+      .reduce((s, b) => s + effectivePlanned(b), 0);
 
     return {
       total,

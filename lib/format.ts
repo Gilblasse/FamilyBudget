@@ -8,6 +8,15 @@ export function fmt(n: number): string {
   );
 }
 
+/**
+ * Signed money: `+$X` / `−$X` / `$0.00`. Used wherever a value carries
+ * direction (e.g. adjustments, variance, trial-balance deltas).
+ */
+export function signedMoney(n: number): string {
+  if (n === 0) return fmt(0);
+  return (n > 0 ? '+' : '−') + fmt(Math.abs(n));
+}
+
 export function fd(d: string): string {
   if (!d) return '—';
   const parts = d.split('-');

@@ -10,6 +10,8 @@ import { fmt } from '@/lib/format';
 import { useMounted } from '@/lib/use-mounted';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
 import { expandAllIncome } from '@/lib/recurrence';
+import { inRange } from '@/lib/filters';
+import { sumAdj } from '@/lib/derived';
 import { OverviewCard, HeroAmount } from './overview-card';
 import type { IncomeStatus } from '@/lib/types';
 
@@ -47,6 +49,11 @@ export function IncomeOverviewCard() {
       expected: 0,
     };
     for (const r of scoped) byStatus[r.status] += r.amount;
+    for (const r of income) {
+      if (!inRange(r.date, range)) continue;
+      const adj = sumAdj(r.adjustments);
+      if (adj !== 0) byStatus[r.status] += adj;
+    }
     const total = LEGEND_ORDER.reduce((sum, key) => sum + byStatus[key], 0);
     const pendingCount = scoped.filter((r) => r.status === 'pending').length;
     return { byStatus, total, pendingCount };

@@ -5,7 +5,13 @@ import { useBudget } from '@/lib/store';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
 import { inRange } from '@/lib/filters';
 import { expandAllIncome } from '@/lib/recurrence';
-import { endingBalance, openingBalanceEntry } from '@/lib/derived';
+import {
+  ADJ_LABEL_SUFFIX,
+  effectivePlanned,
+  endingBalance,
+  incomeAdjEntries,
+  openingBalanceEntry,
+} from '@/lib/derived';
 import { fromIso, todayIso } from '@/lib/date-utils';
 import type { Bill, IncomeOccurrence, Priority } from '@/lib/types';
 import CashFlowPage, { type CashFlowPageProps } from './cash-flow-page';
@@ -18,7 +24,7 @@ function priorityToKind(p: Priority): TxnKind {
 interface DayBucket {
   date: string;
   incomes: { source: string; amount: number }[];
-  bills: Bill[];
+  bills: { bill: Bill; effective: number }[];
 }
 
 export function CashFlow() {
@@ -36,12 +42,23 @@ export function CashFlow() {
 
     const startIso = range?.start ?? periods[0]?.startDate ?? todayIso();
 
-    const allIncome = scopedIncome.reduce((s, r) => s + r.amount, 0);
-    const billsTotal = scopedBills.reduce((s, b) => s + b.amount, 0);
+    const incomeAdjs = incomeAdjEntries(income, range);
+    const incomeAdjTotal = incomeAdjs.reduce((s, e) => s + e.amount, 0);
+
+    // Precompute effective planned once per bill — read 3x below in
+    // the timeline + total + ending-balance passes.
+    const effectiveBills = scopedBills.map((b) => ({
+      bill: b,
+      effective: effectivePlanned(b),
+    }));
+
+    const allIncome =
+      scopedIncome.reduce((s, r) => s + r.amount, 0) + incomeAdjTotal;
+    const billsTotal = effectiveBills.reduce((s, e) => s + e.effective, 0);
     const ending = endingBalance({
       openingBalance: balance,
-      scopedIncome,
-      scopedBills,
+      scopedIncome: [...scopedIncome, ...incomeAdjs],
+      scopedBills: effectiveBills.map((e) => ({ amount: e.effective })),
     });
 
     const buckets = new Map<string, DayBucket>();
@@ -59,7 +76,13 @@ export function CashFlow() {
       ensure(opening.date).incomes.push({ source: opening.label, amount: opening.amount });
     }
     for (const r of scopedIncome) ensure(r.date).incomes.push({ source: r.source, amount: r.amount });
-    for (const b of scopedBills) ensure(b.date).bills.push(b);
+    for (const e of incomeAdjs) {
+      ensure(e.date).incomes.push({
+        source: `${e.source}${ADJ_LABEL_SUFFIX}`,
+        amount: e.amount,
+      });
+    }
+    for (const e of effectiveBills) ensure(e.bill.date).bills.push(e);
 
     const sortedDates = [...buckets.keys()].sort();
     const todayKey = todayIso();
@@ -78,15 +101,15 @@ export function CashFlow() {
           amount: r.amount,
           kind: 'income',
         })),
-        ...bucket.bills.map<TimelineTxn>((b) => ({
-          label: b.name,
-          amount: -b.amount,
-          kind: priorityToKind(b.priority),
+        ...bucket.bills.map<TimelineTxn>(({ bill, effective }) => ({
+          label: bill.name,
+          amount: -effective,
+          kind: priorityToKind(bill.priority),
         })),
       ];
 
       const dayIncomeTotal = bucket.incomes.reduce((s, r) => s + r.amount, 0);
-      const dayBillTotal = bucket.bills.reduce((s, b) => s + b.amount, 0);
+      const dayBillTotal = bucket.bills.reduce((s, e) => s + e.effective, 0);
       const prev = acc.length > 0 ? acc[acc.length - 1].runningBalance : 0;
       const running = prev + dayIncomeTotal - dayBillTotal;
 

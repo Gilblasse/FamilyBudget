@@ -16,6 +16,7 @@
  * always touched the top-level fields, which are the active budget's slice).
  */
 import type { SupabaseClient, PostgrestError } from '@supabase/supabase-js';
+import type { Adjustment } from '@/lib/types';
 import { getSupabase } from './server';
 import { StaleSchemaError } from './envelope';
 
@@ -132,6 +133,10 @@ interface EntityShape {
   toPatch: (payload: Record<string, unknown>) => Record<string, unknown>;
 }
 
+function adjustmentsValue(raw: unknown): Adjustment[] | null {
+  return Array.isArray(raw) ? (raw as Adjustment[]) : null;
+}
+
 const INCOME_SHAPE: EntityShape = {
   table: 'income',
   toRow: (id, budgetId, p) => ({
@@ -145,6 +150,7 @@ const INCOME_SHAPE: EntityShape = {
     cadence: p.cadence == null ? null : String(p.cadence),
     second_day: p.secondDay == null ? null : Number(p.secondDay),
     end_date: p.endDate == null ? null : String(p.endDate),
+    adjustments: adjustmentsValue(p.adjustments),
   }),
   toPatch: (p) => {
     const out: Record<string, unknown> = {};
@@ -156,6 +162,7 @@ const INCOME_SHAPE: EntityShape = {
     if ('cadence' in p) out.cadence = p.cadence ?? null;
     if ('secondDay' in p) out.second_day = p.secondDay ?? null;
     if ('endDate' in p) out.end_date = p.endDate ?? null;
+    if ('adjustments' in p) out.adjustments = adjustmentsValue(p.adjustments);
     return out;
   },
 };
@@ -172,6 +179,7 @@ const BILL_SHAPE: EntityShape = {
     priority: String(p.priority ?? 'imp'),
     action: String(p.action ?? 'pay-full'),
     tags: Array.isArray(p.tags) ? (p.tags as string[]) : null,
+    adjustments: adjustmentsValue(p.adjustments),
   }),
   toPatch: (p) => {
     const out: Record<string, unknown> = {};
@@ -182,6 +190,7 @@ const BILL_SHAPE: EntityShape = {
     if ('priority' in p) out.priority = p.priority;
     if ('action' in p) out.action = p.action;
     if ('tags' in p) out.tags = p.tags ?? null;
+    if ('adjustments' in p) out.adjustments = adjustmentsValue(p.adjustments);
     return out;
   },
 };

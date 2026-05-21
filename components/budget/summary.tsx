@@ -23,7 +23,13 @@ import { cn } from '@/lib/utils';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
 import { inRange } from '@/lib/filters';
 import { expandAllIncome } from '@/lib/recurrence';
-import { endingBalance, isActiveBill, isImportantBill } from '@/lib/derived';
+import {
+  effectivePlanned,
+  endingBalance,
+  incomeAdjEntries,
+  isActiveBill,
+  isImportantBill,
+} from '@/lib/derived';
 import { actionVariant } from '@/lib/badges';
 import { applySort, dirFor, nextDir, type SortState } from '@/lib/sort';
 
@@ -57,16 +63,21 @@ export function Summary() {
   const { totalInc, totalB, critImp, net, pending, partial, sorted } = useMemo(() => {
     const scopedIncome = expandAllIncome(income, range);
     const scopedBills = bills.filter((b) => inRange(b.date, range));
-    const totalInc = endingBalance({
-      openingBalance: balance,
-      scopedIncome,
-      scopedBills: [],
-    });
+    const incomeAdjTotal = incomeAdjEntries(income, range).reduce(
+      (s, e) => s + e.amount,
+      0,
+    );
+    const totalInc =
+      endingBalance({
+        openingBalance: balance,
+        scopedIncome,
+        scopedBills: [],
+      }) + incomeAdjTotal;
     const active = scopedBills.filter(isActiveBill);
-    const totalB = active.reduce((s, b) => s + b.amount, 0);
+    const totalB = active.reduce((s, b) => s + effectivePlanned(b), 0);
     const critImp = active
       .filter(isImportantBill)
-      .reduce((s, b) => s + b.amount, 0);
+      .reduce((s, b) => s + effectivePlanned(b), 0);
     const pending = scopedIncome.filter((r) => r.status === 'pending');
     const partial = scopedBills.filter((b) => b.action === 'partial');
     const sorted = sort

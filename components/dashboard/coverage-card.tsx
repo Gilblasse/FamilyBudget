@@ -14,8 +14,10 @@ import { fmt } from '@/lib/format';
 import { useMounted } from '@/lib/use-mounted';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
 import { inRange } from '@/lib/filters';
-import { expandAllIncome } from '@/lib/recurrence';
-import { isReceivedIncome } from '@/lib/derived';
+import {
+  confirmedIncomeTotalWithAdj,
+  effectivePlanned,
+} from '@/lib/derived';
 import { cn } from '@/lib/utils';
 
 function pct(numer: number, denom: number): number {
@@ -62,19 +64,16 @@ export function CoverageCard() {
   const range = useEffectiveDateRange();
 
   const stats = useMemo(() => {
-    const scopedIncome = expandAllIncome(income, range);
     const scopedBills = bills.filter((b) => inRange(b.date, range));
-    const receivedIncome = scopedIncome
-      .filter(isReceivedIncome)
-      .reduce((s, r) => s + r.amount, 0);
+    const receivedIncome = confirmedIncomeTotalWithAdj(income, range);
     const resources = balance + receivedIncome;
     const critTotal = scopedBills
       .filter((b) => b.priority === 'crit')
-      .reduce((s, b) => s + b.amount, 0);
+      .reduce((s, b) => s + effectivePlanned(b), 0);
     const impTotal = scopedBills
       .filter((b) => b.priority === 'imp')
-      .reduce((s, b) => s + b.amount, 0);
-    const allTotal = scopedBills.reduce((s, b) => s + b.amount, 0);
+      .reduce((s, b) => s + effectivePlanned(b), 0);
+    const allTotal = scopedBills.reduce((s, b) => s + effectivePlanned(b), 0);
     const critImpTotal = critTotal + impTotal;
 
     return {

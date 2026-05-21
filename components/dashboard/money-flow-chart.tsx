@@ -20,7 +20,7 @@ import { useBudget } from '@/lib/store';
 import { useMounted } from '@/lib/use-mounted';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
 import { inRange } from '@/lib/filters';
-import { expandAllIncome } from '@/lib/recurrence';
+import { effectivePlanned, scopedIncomeWithAdj } from '@/lib/derived';
 import { fmt } from '@/lib/format';
 import type { DateRange } from '@/lib/types';
 
@@ -62,13 +62,10 @@ export function MoneyFlowChart() {
               end: range.end < p.endDate ? range.end : p.endDate,
             }
           : { start: p.startDate, end: p.endDate };
-      const periodIncomeTotal = expandAllIncome(income, barRange).reduce(
-        (s, r) => s + r.amount,
-        0,
-      );
+      const periodIncomeTotal = scopedIncomeWithAdj(income, barRange);
       const periodBillsTotal = bills
         .filter((b) => inRange(b.date, barRange))
-        .reduce((s, b) => s + b.amount, 0);
+        .reduce((s, b) => s + effectivePlanned(b), 0);
       return {
         id: p.id,
         label: shortLabel(p.startDate),

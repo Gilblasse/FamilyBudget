@@ -21,6 +21,17 @@ export const isoDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be ISO YYYY-MM-DD');
 
+/**
+ * Per-row adjustment entry. Added in store v10. Optional on Income and
+ * Bill — legacy v9 rows omit the field entirely, so the schema is also
+ * optional on the wire.
+ */
+export const adjustmentSchema = z.object({
+  id: z.string().min(1),
+  amount: z.number(),
+  note: z.string().max(200).optional(),
+});
+
 // ----- BudgetSnapshot canonical schema -----
 //
 // Replaces the duck-typed `z.custom<BudgetSnapshot>((v) => v && 'balance' in v
@@ -45,6 +56,7 @@ export const incomeSchema = z.object({
   cadence: cadenceSchema.optional(),
   secondDay: z.number().int().min(1).max(31).optional(),
   endDate: isoDateSchema.optional(),
+  adjustments: z.array(adjustmentSchema).optional(),
 });
 
 export const billSchema = z.object({
@@ -56,6 +68,7 @@ export const billSchema = z.object({
   priority: prioritySchema,
   action: actionSchema,
   tags: z.array(z.string()).optional(),
+  adjustments: z.array(adjustmentSchema).optional(),
 });
 
 export const dateRangeSchema = z.object({

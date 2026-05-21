@@ -3,6 +3,23 @@ export type IncomeCadence = 'once' | 'weekly' | 'biweekly' | 'semimonthly' | 'mo
 export type Priority = 'crit' | 'imp' | 'opt' | 'flex';
 export type BillAction = 'pay-full' | 'partial' | 'delay' | 'reduce' | 'skip';
 
+/**
+ * Per-row signed adjustment to the planned amount. Each entry carries an
+ * optional free-text note so the audit trail explains *why* the plan moved.
+ * Effective planned = row.amount + sum(adjustments[].amount).
+ *
+ * Layered on top of (not replacing) `Income.status` and `paid[occKey]`:
+ * intent and per-occurrence settlement remain on those axes; adjustments
+ * are purely the variance log.
+ */
+export interface Adjustment {
+  id: string;
+  amount: number;
+  note?: string;
+}
+
+export const MAX_ADJUSTMENTS_PER_ROW = 20;
+
 export interface BudgetPeriod {
   id: string;
   startDate: string;
@@ -25,6 +42,8 @@ export interface Income {
   secondDay?: number;
   // Optional inclusive cutoff (ISO). Missing = indefinite.
   endDate?: string;
+  // Signed deltas vs the planned `amount`, with optional notes. Added in v10.
+  adjustments?: Adjustment[];
 }
 
 export interface IncomeOccurrence {
@@ -51,6 +70,8 @@ export interface Bill {
   // substring match on `name`. The `'subscription'` tag drives the
   // collapsible "Subscriptions" bucket in the bills table.
   tags?: string[];
+  // Signed deltas vs the planned `amount`, with optional notes. Added in v10.
+  adjustments?: Adjustment[];
 }
 
 export type PaidState = Record<string, boolean>;

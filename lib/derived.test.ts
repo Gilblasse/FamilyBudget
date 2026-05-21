@@ -1,16 +1,29 @@
 import { describe, it, expect } from 'vitest';
 import {
+  ADJ_LABEL_SUFFIX,
   confirmedIncomeTotal,
+  confirmedIncomeTotalWithAdj,
   criticalUnpaidBills,
+  effectivePlanned,
   endingBalance,
+  incomeAdjEntries,
   isActiveBill,
   isImportantBill,
   isPaid,
   isReceivedIncome,
   openingBalanceEntry,
   pendingIncomeCount,
+  scopedIncomeWithAdj,
+  sumAdj,
+  variance,
 } from './derived';
-import type { Bill, IncomeOccurrence, PaidState } from './types';
+import type {
+  Adjustment,
+  Bill,
+  Income,
+  IncomeOccurrence,
+  PaidState,
+} from './types';
 
 describe('openingBalanceEntry', () => {
   it('returns null for exactly zero (no row to display)', () => {
@@ -214,6 +227,195 @@ describe('criticalUnpaidBills', () => {
 
   it('does not include skipped/delayed bills', () => {
     expect(criticalUnpaidBills(bills, paid).every((b) => b.action !== 'skip')).toBe(true);
+  });
+});
+
+describe('sumAdj', () => {
+  it('returns 0 for undefined / empty', () => {
+    expect(sumAdj(undefined)).toBe(0);
+    expect(sumAdj([])).toBe(0);
+  });
+
+  it('sums signed amounts', () => {
+    const adj: Adjustment[] = [
+      { id: 'a1', amount: 10 },
+      { id: 'a2', amount: -3, note: 'refund' },
+      { id: 'a3', amount: 5 },
+    ];
+    expect(sumAdj(adj)).toBe(12);
+  });
+
+  it('skips non-finite entries (half-typed input)', () => {
+    const adj: Adjustment[] = [
+      { id: 'a1', amount: 10 },
+      { id: 'a2', amount: Number.NaN },
+      { id: 'a3', amount: Number.POSITIVE_INFINITY },
+      { id: 'a4', amount: -2 },
+    ];
+    expect(sumAdj(adj)).toBe(8);
+  });
+});
+
+describe('effectivePlanned', () => {
+  it('returns amount when adjustments are missing', () => {
+    expect(effectivePlanned({ amount: 100 })).toBe(100);
+    expect(effectivePlanned({ amount: 100, adjustments: [] })).toBe(100);
+  });
+
+  it('adds signed adjustments to amount', () => {
+    expect(
+      effectivePlanned({
+        amount: 100,
+        adjustments: [
+          { id: 'a', amount: 25 },
+          { id: 'b', amount: -10 },
+        ],
+      }),
+    ).toBe(115);
+  });
+
+  it('can go negative when adjustments overshoot', () => {
+    expect(
+      effectivePlanned({
+        amount: 50,
+        adjustments: [{ id: 'a', amount: -75 }],
+      }),
+    ).toBe(-25);
+  });
+});
+
+describe('variance', () => {
+  it('matches sumAdj', () => {
+    const adjustments: Adjustment[] = [
+      { id: 'a', amount: 12 },
+      { id: 'b', amount: -4 },
+    ];
+    expect(variance({ adjustments })).toBe(8);
+    expect(variance({})).toBe(0);
+  });
+});
+
+describe('incomeAdjEntries', () => {
+  const baseIncome = (id: string, date: string, adjustments?: Adjustment[]): Income => ({
+    id,
+    periodId: 'p1',
+    source: `Source ${id}`,
+    date,
+    amount: 1000,
+    status: 'expected',
+    cadence: 'once',
+    ...(adjustments ? { adjustments } : {}),
+  });
+
+  it('emits one entry per source whose anchor date is in range', () => {
+    const income: Income[] = [
+      baseIncome('a', '2026-05-10', [{ id: 'x', amount: 50 }]),
+      baseIncome('b', '2026-05-15', [{ id: 'y', amount: -20, note: 'shortfall' }]),
+    ];
+    const entries = incomeAdjEntries(income, { start: '2026-05-01', end: '2026-05-31' });
+    expect(entries).toEqual([
+      { id: 'a', source: 'Source a', date: '2026-05-10', amount: 50 },
+      { id: 'b', source: 'Source b', date: '2026-05-15', amount: -20 },
+    ]);
+  });
+
+  it('omits sources whose anchor date falls outside the range', () => {
+    const income: Income[] = [
+      baseIncome('a', '2026-04-30', [{ id: 'x', amount: 50 }]),
+      baseIncome('b', '2026-06-01', [{ id: 'y', amount: 75 }]),
+    ];
+    const entries = incomeAdjEntries(income, { start: '2026-05-01', end: '2026-05-31' });
+    expect(entries).toEqual([]);
+  });
+
+  it('omits sources with net-zero adjustments', () => {
+    const income: Income[] = [
+      baseIncome('a', '2026-05-10', [
+        { id: 'x', amount: 50 },
+        { id: 'y', amount: -50 },
+      ]),
+    ];
+    expect(incomeAdjEntries(income, { start: '2026-05-01', end: '2026-05-31' })).toEqual([]);
+  });
+
+  it('emits all in-period entries when range is null', () => {
+    const income: Income[] = [
+      baseIncome('a', '2026-05-10', [{ id: 'x', amount: 50 }]),
+      baseIncome('b', '2026-12-31', [{ id: 'y', amount: 75 }]),
+    ];
+    expect(incomeAdjEntries(income, null)).toHaveLength(2);
+  });
+});
+
+describe('ADJ_LABEL_SUFFIX', () => {
+  it('matches the documented format', () => {
+    expect(ADJ_LABEL_SUFFIX).toBe(' (adjustment)');
+  });
+});
+
+describe('scopedIncomeWithAdj', () => {
+  const mk = (id: string, amount: number, adj?: Adjustment[]): Income => ({
+    id,
+    periodId: 'p1',
+    source: `S-${id}`,
+    date: '2026-05-10',
+    amount,
+    status: 'expected',
+    cadence: 'once',
+    ...(adj ? { adjustments: adj } : {}),
+  });
+
+  it('returns occurrence sum + adjustment sum', () => {
+    const income: Income[] = [
+      mk('a', 1000, [{ id: 'x', amount: 50 }]),
+      mk('b', 200),
+    ];
+    expect(scopedIncomeWithAdj(income, { start: '2026-05-01', end: '2026-05-31' })).toBe(1250);
+  });
+
+  it('excludes out-of-range sources entirely', () => {
+    const income: Income[] = [mk('a', 1000, [{ id: 'x', amount: 50 }])];
+    expect(scopedIncomeWithAdj(income, { start: '2026-06-01', end: '2026-06-30' })).toBe(0);
+  });
+});
+
+describe('confirmedIncomeTotalWithAdj', () => {
+  const mk = (
+    id: string,
+    status: 'expected' | 'confirmed' | 'pending' | 'received',
+    amount: number,
+    adj?: Adjustment[],
+    date = '2026-05-10',
+  ): Income => ({
+    id,
+    periodId: 'p1',
+    source: `S-${id}`,
+    date,
+    amount,
+    status,
+    cadence: 'once',
+    ...(adj ? { adjustments: adj } : {}),
+  });
+
+  it('sums received + confirmed occurrences and adjustments', () => {
+    const income: Income[] = [
+      mk('a', 'received', 1000, [{ id: 'x', amount: 50 }]),
+      mk('b', 'confirmed', 200, [{ id: 'y', amount: -10 }]),
+      mk('c', 'pending', 999, [{ id: 'z', amount: 100 }]),
+      mk('d', 'expected', 999),
+    ];
+    expect(
+      confirmedIncomeTotalWithAdj(income, { start: '2026-05-01', end: '2026-05-31' }),
+    ).toBe(1240);
+  });
+
+  it('drops adjustments on out-of-range received sources', () => {
+    const income: Income[] = [
+      mk('a', 'received', 0, [{ id: 'x', amount: 50 }], '2026-04-30'),
+    ];
+    expect(
+      confirmedIncomeTotalWithAdj(income, { start: '2026-05-01', end: '2026-05-31' }),
+    ).toBe(0);
   });
 });
 

@@ -17,10 +17,11 @@ import {
   DEFAULT_BUDGETS,
   DEFAULT_BUDGET_ID,
   DEFAULT_INCOME,
+  DEFAULT_PAID,
   DEFAULT_PERIOD_ID,
   DEFAULT_PERIODS,
 } from './seed';
-import { addDaysIso, todayIso } from './date-utils';
+import { addDaysIso, daysBetween, todayIso } from './date-utils';
 import { dedupeBills, dedupeIncome } from './dedupe';
 import { uid } from './format';
 import { isRemotePrimaryClient } from './remote-mode';
@@ -35,8 +36,13 @@ import { isRemotePrimaryClient } from './remote-mode';
  * fields already lived on persisted local state since v4, so the v9
  * migration branch is a no-op marker. The bump is what triggers the
  * Apps Script 409 stale-schema guard for older clients.
+ *
+ * v10: adds `adjustments?: Adjustment[]` to Income and Bill. Field is
+ * optional both in TS and on the wire — older clients ignore it and
+ * round-trip cleanly. The v10 migration just normalizes `null`/missing
+ * to omitted (no field add forced).
  */
-export const STORE_VERSION = 9;
+export const STORE_VERSION = 10;
 
 export type { BudgetData };
 
@@ -84,7 +90,7 @@ function freshDefaultData(): BudgetData {
     balance: 0,
     income: DEFAULT_INCOME,
     bills: DEFAULT_BILLS,
-    paid: {},
+    paid: { ...DEFAULT_PAID },
     periods: DEFAULT_PERIODS,
     activePeriodId: DEFAULT_PERIOD_ID,
     dateRange: null,
@@ -245,6 +251,25 @@ export function migrateBudgetState(
       budgets: s.budgets ?? [],
       activeBudgetId: s.activeBudgetId ?? DEFAULT_BUDGET_ID,
       budgetData: s.budgetData ?? {},
+    };
+  }
+  if (fromVersion < 10) {
+    // v10 introduces `adjustments?: Adjustment[]` on Income and Bill.
+    // The field is optional and absent on legacy rows — no field add is
+    // forced. Defensive normalization: if a row arrives with `null` or
+    // a non-array `adjustments`, drop it so downstream `Array.isArray`
+    // checks (and `sumAdj`) behave.
+    const normalizeAdj = <T extends { adjustments?: unknown }>(row: T): T => {
+      if (row.adjustments === undefined) return row;
+      if (Array.isArray(row.adjustments)) return row;
+      const next: Record<string, unknown> = { ...row };
+      delete next.adjustments;
+      return next as T;
+    };
+    s = {
+      ...s,
+      income: (s.income ?? []).map(normalizeAdj),
+      bills: (s.bills ?? []).map(normalizeAdj),
     };
   }
   return s as BudgetData & MultiBudgetSlice;
@@ -499,6 +524,11 @@ export const useBudget = create<BudgetState>()(
         const id = uid();
         set((s) => {
           const copied = copyDataWithFreshIds(snapshotData(s));
+          // Capture the source period's start BEFORE we rewrite periods with
+          // the new range — needed for the date-shift delta below.
+          const sourceActive = copied.periods.find(
+            (p) => p.id === copied.activePeriodId,
+          );
           const withRange = range
             ? {
                 ...copied,
@@ -510,8 +540,28 @@ export const useBudget = create<BudgetState>()(
                 ),
               }
             : copied;
-          const fallbackPeriod = withRange.periods.find(
-            (p) => p.id === withRange.activePeriodId,
+          // Shift every income/bill date by the delta between the source
+          // period's start and the new range's start. Preserves spacing
+          // and lands rows inside the new window. No-op when range matches.
+          const delta = range && sourceActive
+            ? daysBetween(sourceActive.startDate, range.start)
+            : 0;
+          const shifted = delta === 0
+            ? withRange
+            : {
+                ...withRange,
+                income: withRange.income.map((r) => ({
+                  ...r,
+                  date: addDaysIso(r.date, delta),
+                  ...(r.endDate ? { endDate: addDaysIso(r.endDate, delta) } : {}),
+                })),
+                bills: withRange.bills.map((b) => ({
+                  ...b,
+                  date: addDaysIso(b.date, delta),
+                })),
+              };
+          const fallbackPeriod = shifted.periods.find(
+            (p) => p.id === shifted.activePeriodId,
           );
           const defaultRange: DateRange = range
             ?? (fallbackPeriod
@@ -528,7 +578,7 @@ export const useBudget = create<BudgetState>()(
             [s.activeBudgetId]: snapshotData(s),
           };
           return {
-            ...withRange,
+            ...shifted,
             budgets: [...s.budgets, meta],
             activeBudgetId: id,
             budgetData: nextBudgetData,

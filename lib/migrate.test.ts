@@ -44,7 +44,7 @@ function expectV8Shape(s: BudgetData & MultiBudgetSlice) {
 
 describe('migrateBudgetState — version chain', () => {
   it('STORE_VERSION is the latest migration target', () => {
-    expect(STORE_VERSION).toBe(9);
+    expect(STORE_VERSION).toBe(10);
   });
 
   it('v1 → v8: empty state hydrates into the canonical shape', () => {
@@ -213,6 +213,35 @@ describe('migrateBudgetState — version chain', () => {
     } as unknown as Partial<BudgetData & MultiBudgetSlice>;
     const out = migrateBudgetState(v7, 7);
     expect(out.bills[0].tags).toEqual(['subscription']);
+  });
+
+  it('v9 → v10: rows without adjustments are unchanged; non-array adjustments are stripped', () => {
+    const v9 = {
+      balance: 0,
+      income: [
+        { id: 'i1', periodId: 'p1', source: 'wage', date: '2026-04-15', amount: 1000, status: 'expected' as const, cadence: 'once' as const },
+        // simulate corrupted persisted state
+        { id: 'i2', periodId: 'p1', source: 'side', date: '2026-04-20', amount: 200, status: 'expected' as const, cadence: 'once' as const, adjustments: null as unknown as undefined },
+      ] as Income[],
+      bills: [
+        { id: 'b1', periodId: 'p1', name: 'rent', date: '2026-05-01', amount: 500, priority: 'crit' as const, action: 'pay-full' as const, adjustments: [{ id: 'a1', amount: 25, note: 'late fee' }] },
+        { id: 'b2', periodId: 'p1', name: 'gas', date: '2026-05-02', amount: 80, priority: 'imp' as const, action: 'pay-full' as const, adjustments: 'broken' as unknown as undefined },
+      ] as Bill[],
+      paid: {},
+      periods: [{ id: 'p1', startDate: '2026-04-09', endDate: '2026-05-14' }],
+      activePeriodId: 'p1',
+      dateRange: null,
+      budgets: [
+        { id: 'b1', name: 'My', createdAt: '2026-01-01T00:00:00.000Z', defaultRange: { start: '2026-04-09', end: '2026-05-14' } },
+      ],
+      activeBudgetId: 'b1',
+      budgetData: {},
+    } as unknown as Partial<BudgetData & MultiBudgetSlice>;
+    const out = migrateBudgetState(v9, 9);
+    expect(out.income[0].adjustments).toBeUndefined();
+    expect('adjustments' in out.income[1]).toBe(false);
+    expect(out.bills[0].adjustments).toEqual([{ id: 'a1', amount: 25, note: 'late fee' }]);
+    expect('adjustments' in out.bills[1]).toBe(false);
   });
 
   it('migrating from STORE_VERSION is a no-op (idempotent)', () => {

@@ -15,7 +15,14 @@ import { useMounted } from '@/lib/use-mounted';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
 import { inRange } from '@/lib/filters';
 import { expandAllIncome } from '@/lib/recurrence';
-import { isActiveBill, isReceivedIncome } from '@/lib/derived';
+import {
+  ADJ_LABEL_SUFFIX,
+  confirmedIncomeTotalWithAdj,
+  effectivePlanned,
+  incomeAdjEntries,
+  isActiveBill,
+  isReceivedIncome,
+} from '@/lib/derived';
 import { OverviewCard, HeroAmount } from './overview-card';
 import {
   BalanceSparkActiveDot,
@@ -59,11 +66,15 @@ export function BalanceOverviewCard() {
       .reduce((sum, r) => sum + r.amount, 0);
   }, [income, previousPeriod]);
 
-  const totalReceived = useMemo(() => {
-    return expandAllIncome(income, dateRange)
-      .filter(isReceivedIncome)
-      .reduce((sum, r) => sum + r.amount, 0);
-  }, [income, dateRange]);
+  const currentOccurrences = useMemo(
+    () => expandAllIncome(income, dateRange),
+    [income, dateRange],
+  );
+
+  const totalReceived = useMemo(
+    () => confirmedIncomeTotalWithAdj(income, dateRange),
+    [income, dateRange],
+  );
 
   const delta = useMemo(() => {
     if (earnedLastTime === null || earnedLastTime === 0) return null;
@@ -82,23 +93,29 @@ export function BalanceOverviewCard() {
       label: string;
       priority?: SparkPoint['priority'];
     };
-    const periodIncome: Event[] = expandAllIncome(income, dateRange).map((r) => ({
+    const periodIncome: Event[] = currentOccurrences.map((r) => ({
       date: r.date,
       delta: r.amount,
       kind: 'income',
       label: r.source,
     }));
+    const periodIncomeAdj: Event[] = incomeAdjEntries(income, dateRange).map((e) => ({
+      date: e.date,
+      delta: e.amount,
+      kind: 'income',
+      label: `${e.source}${ADJ_LABEL_SUFFIX}`,
+    }));
     const periodBills: Event[] = bills
       .filter((b) => inRange(b.date, dateRange) && isActiveBill(b))
       .map((b) => ({
         date: b.date,
-        delta: -b.amount,
+        delta: -effectivePlanned(b),
         kind: 'bill',
         label: b.name,
         priority: b.priority,
       }));
-    const events = [...periodIncome, ...periodBills].sort((a, b) =>
-      a.date.localeCompare(b.date),
+    const events = [...periodIncome, ...periodIncomeAdj, ...periodBills].sort(
+      (a, b) => a.date.localeCompare(b.date),
     );
     let running = balance;
     const points: SparkPoint[] = [
@@ -124,7 +141,7 @@ export function BalanceOverviewCard() {
       });
     });
     return points;
-  }, [balance, income, bills, dateRange]);
+  }, [balance, currentOccurrences, income, bills, dateRange]);
 
   function startEditing() {
     setDraft(String(balance));

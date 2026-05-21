@@ -11,6 +11,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { STORE_VERSION } from '@/lib/store';
 import type {
+  Adjustment,
   Bill,
   BudgetData,
   BudgetMeta,
@@ -74,6 +75,7 @@ interface IncomeRow {
   cadence: IncomeCadence | null;
   second_day: number | null;
   end_date: string | null;
+  adjustments: Adjustment[] | null;
 }
 
 interface BillRow {
@@ -86,6 +88,7 @@ interface BillRow {
   priority: Priority;
   action: BillAction;
   tags: string[] | null;
+  adjustments: Adjustment[] | null;
 }
 
 interface PaidRow {
@@ -146,6 +149,9 @@ function incomeFromRow(row: IncomeRow): Income {
     ...(row.cadence ? { cadence: row.cadence } : {}),
     ...(row.second_day != null ? { secondDay: row.second_day } : {}),
     ...(row.end_date ? { endDate: row.end_date } : {}),
+    ...(Array.isArray(row.adjustments) && row.adjustments.length > 0
+      ? { adjustments: row.adjustments }
+      : {}),
   };
 }
 
@@ -159,6 +165,9 @@ function billFromRow(row: BillRow): Bill {
     priority: row.priority,
     action: row.action,
     ...(row.tags ? { tags: row.tags } : {}),
+    ...(Array.isArray(row.adjustments) && row.adjustments.length > 0
+      ? { adjustments: row.adjustments }
+      : {}),
   };
 }
 

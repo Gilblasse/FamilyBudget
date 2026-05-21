@@ -20,7 +20,13 @@ import { cn } from '@/lib/utils';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
 import { inRange } from '@/lib/filters';
 import { expandAllIncome } from '@/lib/recurrence';
-import { openingBalanceEntry } from '@/lib/derived';
+import {
+  ADJ_LABEL_SUFFIX,
+  effectivePlanned,
+  incomeAdjEntries,
+  openingBalanceEntry,
+  sumAdj,
+} from '@/lib/derived';
 import { todayIso } from '@/lib/date-utils';
 
 interface Entry {
@@ -89,6 +95,17 @@ export function TrialBalance() {
         note: r.status === 'pending' ? 'pending' : undefined,
       });
     }
+    for (const e of incomeAdjEntries(income, range)) {
+      list.push({
+        key: `inc_adj_${e.id}`,
+        date: e.date,
+        label: `${e.source}${ADJ_LABEL_SUFFIX}`,
+        amount: Math.abs(e.amount),
+        type: e.amount >= 0 ? 'inc' : 'exp',
+        paid: true,
+        note: 'adjustment',
+      });
+    }
     for (const b of scopedBills) {
       if (b.action === 'skip' || b.action === 'delay') continue;
       const key = `bill_${b.id}`;
@@ -96,9 +113,10 @@ export function TrialBalance() {
         key,
         date: b.date,
         label: b.name,
-        amount: b.amount,
+        amount: effectivePlanned(b),
         type: 'exp',
         paid: !!paid[key],
+        note: sumAdj(b.adjustments) !== 0 ? 'incl. adjustments' : undefined,
       });
     }
     list.sort((a, b) => {
