@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { Fragment, useMemo, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
 import {
   ArrowDown,
@@ -39,6 +39,13 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import {
   Table,
   TableBody,
   TableCell,
@@ -54,6 +61,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { AdjustmentCell } from './adjustment-cell';
 import { Metric } from './metric';
 import { PriorityDot } from './priority-dot';
 import { RangeStatus } from './range-status';
@@ -74,7 +82,6 @@ import { useBudget } from '@/lib/store';
 import { useUIStore } from '@/lib/ui-store';
 import { fmt } from '@/lib/format';
 import { useEffectiveDateRange } from '@/lib/use-effective-range';
-import { expandAllIncome } from '@/lib/recurrence';
 import { visibleBills } from '@/lib/visibility';
 import {
   ACTION_LABEL,
@@ -86,7 +93,13 @@ import {
 import { cn } from '@/lib/utils';
 import { actionVariant } from '@/lib/badges';
 import { applySort, dirFor, nextDir, type SortState } from '@/lib/sort';
-import { isActiveBill, isImportantBill } from '@/lib/derived';
+import {
+  effectivePlanned,
+  isActiveBill,
+  isImportantBill,
+  scopedIncomeWithAdj,
+} from '@/lib/derived';
+import type { Adjustment } from '@/lib/types';
 import {
   MAX_TAGS_PER_BILL,
   MAX_TAG_LENGTH,
@@ -94,6 +107,8 @@ import {
 } from '@/lib/tags';
 
 type SortCol = 'name' | 'due' | 'amount';
+
+const titleCaseTag = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
 export function BillsTable() {
   const bills = useBudget((s) => s.bills);
@@ -110,7 +125,9 @@ export function BillsTable() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   const [sort, setSort] = useState<SortState<SortCol>>(null);
-  const [showSubscriptions, setShowSubscriptions] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const toggleGroup = (tag: string) =>
+    setExpandedGroups((m) => ({ ...m, [tag]: !m[tag] }));
   const [viewMode, setViewMode] = useState<'filtered' | 'all'>('filtered');
   const effectiveRange = viewMode === 'all' ? null : range;
 
@@ -136,31 +153,47 @@ export function BillsTable() {
   );
   const isSorted = sort !== null;
 
-  const { regularBills, subscriptionBills, subscriptionTotal } = useMemo(() => {
-    const subs: Bill[] = [];
-    const rest: Bill[] = [];
+  const { ungroupedBills, tagGroups } = useMemo(() => {
+    const counts = new Map<string, number>();
     for (const b of displayedBills) {
-      if (b.tags?.includes('subscription')) subs.push(b);
-      else rest.push(b);
+      const home = b.tags?.[0];
+      if (home) counts.set(home, (counts.get(home) ?? 0) + 1);
     }
-    const total = subs.reduce((s, b) => s + b.amount, 0);
-    return { regularBills: rest, subscriptionBills: subs, subscriptionTotal: total };
+
+    const ungrouped: Bill[] = [];
+    const buckets = new Map<string, Bill[]>();
+    for (const b of displayedBills) {
+      const home = b.tags?.[0];
+      if (home && (counts.get(home) ?? 0) >= 2) {
+        const arr = buckets.get(home) ?? [];
+        arr.push(b);
+        buckets.set(home, arr);
+      } else {
+        ungrouped.push(b);
+      }
+    }
+
+    const tagGroups = [...buckets.entries()]
+      .map(([tag, bills]) => ({
+        tag,
+        bills,
+        total: bills.reduce((s, b) => s + effectivePlanned(b), 0),
+      }))
+      .sort((a, b) => a.tag.localeCompare(b.tag));
+
+    return { ungroupedBills: ungrouped, tagGroups };
   }, [displayedBills]);
   const scopedIncomeTotal = useMemo(
-    () =>
-      expandAllIncome(income, effectiveRange).reduce(
-        (s, r) => s + r.amount,
-        0,
-      ),
+    () => scopedIncomeWithAdj(income, effectiveRange),
     [income, effectiveRange],
   );
 
   const { totalActive, critImp, net } = useMemo(() => {
     const active = scopedBills.filter(isActiveBill);
-    const totalActive = active.reduce((s, b) => s + b.amount, 0);
+    const totalActive = active.reduce((s, b) => s + effectivePlanned(b), 0);
     const critImp = active
       .filter(isImportantBill)
-      .reduce((s, b) => s + b.amount, 0);
+      .reduce((s, b) => s + effectivePlanned(b), 0);
     const totalInc = scopedIncomeTotal + balance;
     return { totalActive, critImp, net: totalInc - totalActive };
   }, [scopedBills, scopedIncomeTotal, balance]);
@@ -260,6 +293,14 @@ export function BillsTable() {
           <AmountCell
             value={r.amount}
             onChange={(v) => updateBill(r.id, { amount: v })}
+          />
+        </TableCell>
+        <TableCell className="text-right">
+          <AdjustmentCell
+            value={r.adjustments}
+            onChange={(next) => updateBill(r.id, { adjustments: next })}
+            label={`Adjustments for ${r.name || 'bill'}`}
+            flavor="bill"
           />
         </TableCell>
         <TableCell>
@@ -384,12 +425,12 @@ export function BillsTable() {
       </div>
 
       <div className="hidden overflow-hidden rounded-2xl border border-border-subtle bg-card md:block">
-        <Table>
+        <Table className="table-fixed">
           <TableHeader sticky>
             <TableRow>
               <TableHead className="w-10" />
               <TableHead
-                className="w-[24%]"
+                className="w-[28%]"
                 sortable
                 direction={dirFor(sort, 'name')}
                 onSort={() => cycleSort('name')}
@@ -405,21 +446,22 @@ export function BillsTable() {
                 Due
               </TableHead>
               <TableHead
-                className="w-[16%] text-right"
+                className="w-[12%] text-right"
                 sortable
                 direction={dirFor(sort, 'amount')}
                 onSort={() => cycleSort('amount')}
               >
                 Amount
               </TableHead>
-              <TableHead className="w-[16%]">Priority</TableHead>
-              <TableHead className="w-[18%]">Action</TableHead>
+              <TableHead className="w-[8%] text-right">Adjust ±</TableHead>
+              <TableHead className="w-[14%]">Priority</TableHead>
+              <TableHead className="w-[16%]">Action</TableHead>
               <TableHead className="w-24 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {regularBills.length === 0 && subscriptionBills.length === 0 ? (
-              <TableEmpty colSpan={7}>
+            {ungroupedBills.length === 0 && tagGroups.length === 0 ? (
+              <TableEmpty colSpan={8}>
                 <EmptyState
                   icon={Inbox}
                   title="No bills in the selected date range"
@@ -440,41 +482,46 @@ export function BillsTable() {
               </TableEmpty>
             ) : (
               <>
-                {regularBills.map(renderBillRow)}
-                {subscriptionBills.length > 0 && (
-                  <TableRow
-                    className="cursor-pointer bg-surface-2 hover:bg-surface-2"
-                    onClick={() => setShowSubscriptions((v) => !v)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        setShowSubscriptions((v) => !v);
-                      }
-                    }}
-                    role="button"
-                    tabIndex={0}
-                    aria-expanded={showSubscriptions}
-                    aria-controls="subscriptions-group"
-                  >
-                    <TableCell colSpan={7} className="font-medium">
-                      <span className="flex items-center gap-2">
-                        {showSubscriptions ? (
-                          <ChevronDown className="size-4" aria-hidden />
-                        ) : (
-                          <ChevronRight className="size-4" aria-hidden />
-                        )}
-                        Subscriptions
-                        <span className="text-xs text-muted-foreground">
-                          ({subscriptionBills.length})
-                        </span>
-                        <span className="ml-auto money text-muted-foreground">
-                          {fmt(subscriptionTotal)}
-                        </span>
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                )}
-                {showSubscriptions && subscriptionBills.map(renderBillRow)}
+                {ungroupedBills.map(renderBillRow)}
+                {tagGroups.map((g) => {
+                  const expanded = !!expandedGroups[g.tag];
+                  return (
+                    <Fragment key={g.tag}>
+                      <TableRow
+                        className="cursor-pointer bg-surface-2 hover:bg-surface-2"
+                        onClick={() => toggleGroup(g.tag)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            toggleGroup(g.tag);
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={expanded}
+                        aria-controls={`tag-group-${g.tag}`}
+                      >
+                        <TableCell colSpan={8} className="font-medium">
+                          <span className="flex items-center gap-2">
+                            {expanded ? (
+                              <ChevronDown className="size-4" aria-hidden />
+                            ) : (
+                              <ChevronRight className="size-4" aria-hidden />
+                            )}
+                            {titleCaseTag(g.tag)}
+                            <span className="text-xs text-muted-foreground">
+                              ({g.bills.length})
+                            </span>
+                            <span className="ml-auto money text-muted-foreground">
+                              {fmt(g.total)}
+                            </span>
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                      {expanded && g.bills.map(renderBillRow)}
+                    </Fragment>
+                  );
+                })}
               </>
             )}
           </TableBody>
@@ -482,7 +529,7 @@ export function BillsTable() {
       </div>
 
       <div className="space-y-3 md:hidden">
-        {regularBills.length === 0 && subscriptionBills.length === 0 ? (
+        {ungroupedBills.length === 0 && tagGroups.length === 0 ? (
           <div className="rounded-2xl border border-border-subtle bg-card">
             <EmptyState
               icon={Inbox}
@@ -497,12 +544,14 @@ export function BillsTable() {
             />
           </div>
         ) : (
-          regularBills.map((b, i) => (
+          ungroupedBills.map((b, i) => (
             <BillCard
               key={b.id}
               bill={b}
-              prevId={i > 0 ? regularBills[i - 1].id : null}
-              nextId={i < regularBills.length - 1 ? regularBills[i + 1].id : null}
+              prevId={i > 0 ? ungroupedBills[i - 1].id : null}
+              nextId={
+                i < ungroupedBills.length - 1 ? ungroupedBills[i + 1].id : null
+              }
               isSorted={isSorted}
               onUpdate={updateBill}
               onRemove={handleRemove}
@@ -510,40 +559,45 @@ export function BillsTable() {
             />
           ))
         )}
-        {subscriptionBills.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowSubscriptions((v) => !v)}
-            aria-expanded={showSubscriptions}
-            className="flex w-full items-center gap-2 rounded-2xl border border-border-subtle bg-surface-2 px-3 py-3 text-left text-sm font-medium hover:bg-surface-2/80"
-          >
-            {showSubscriptions ? (
-              <ChevronDown className="size-4" aria-hidden />
-            ) : (
-              <ChevronRight className="size-4" aria-hidden />
-            )}
-            Subscriptions
-            <span className="text-xs text-muted-foreground">
-              ({subscriptionBills.length})
-            </span>
-            <span className="ml-auto money text-muted-foreground">
-              {fmt(subscriptionTotal)}
-            </span>
-          </button>
-        )}
-        {showSubscriptions &&
-          subscriptionBills.map((b) => (
-            <BillCard
-              key={b.id}
-              bill={b}
-              prevId={null}
-              nextId={null}
-              isSorted
-              onUpdate={updateBill}
-              onRemove={handleRemove}
-              onReorder={reorderBill}
-            />
-          ))}
+        {tagGroups.map((g) => {
+          const expanded = !!expandedGroups[g.tag];
+          return (
+            <Fragment key={g.tag}>
+              <button
+                type="button"
+                onClick={() => toggleGroup(g.tag)}
+                aria-expanded={expanded}
+                className="flex w-full items-center gap-2 rounded-2xl border border-border-subtle bg-surface-2 px-3 py-3 text-left text-sm font-medium hover:bg-surface-2/80"
+              >
+                {expanded ? (
+                  <ChevronDown className="size-4" aria-hidden />
+                ) : (
+                  <ChevronRight className="size-4" aria-hidden />
+                )}
+                {titleCaseTag(g.tag)}
+                <span className="text-xs text-muted-foreground">
+                  ({g.bills.length})
+                </span>
+                <span className="ml-auto money text-muted-foreground">
+                  {fmt(g.total)}
+                </span>
+              </button>
+              {expanded &&
+                g.bills.map((b) => (
+                  <BillCard
+                    key={b.id}
+                    bill={b}
+                    prevId={null}
+                    nextId={null}
+                    isSorted
+                    onUpdate={updateBill}
+                    onRemove={handleRemove}
+                    onReorder={reorderBill}
+                  />
+                ))}
+            </Fragment>
+          );
+        })}
       </div>
 
       <Button
@@ -624,9 +678,16 @@ function BillCard({
           onChange={(tags) => onUpdate(bill.id, { tags })}
           className="h-11 w-11 shrink-0"
         />
-        <AiBoundary>
-          <AiSuggestButton bill={bill} className="h-11 w-11 shrink-0" />
-        </AiBoundary>
+        <AdjustmentCell
+          value={bill.adjustments}
+          onChange={(next: Adjustment[] | undefined) =>
+            onUpdate(bill.id, { adjustments: next })
+          }
+          label={`Adjustments for ${bill.name || 'bill'}`}
+          flavor="bill"
+          compact
+          className="h-11 w-11 shrink-0"
+        />
         <DeleteBillButton
           bill={bill}
           onConfirm={() => onRemove(bill)}
@@ -637,7 +698,11 @@ function BillCard({
       <div className="grid grid-cols-2 gap-2">
         <div className="space-y-1">
           <Label className="text-[11px] text-muted-foreground">Due</Label>
-          <DatePicker value={bill.date} onChange={(v) => onUpdate(bill.id, { date: v })} />
+          <DatePicker
+            value={bill.date}
+            onChange={(v) => onUpdate(bill.id, { date: v })}
+            className="h-11"
+          />
         </div>
         <div className="space-y-1">
           <Label className="text-[11px] text-muted-foreground">Amount</Label>
@@ -839,16 +904,36 @@ function TagsButton({
   const [draft, setDraft] = useState('');
   const tags = bill.tags ?? [];
   const count = tags.length;
+  const allBills = useBudget((s) => s.bills);
 
-  function addTag() {
-    const t = normalizeTag(draft);
-    if (!t || t.length > MAX_TAG_LENGTH) return;
-    if (tags.includes(t)) {
+  const candidateTags = useMemo(() => {
+    const onThisBill = new Set(bill.tags ?? []);
+    const all = new Set<string>();
+    for (const b of allBills) {
+      for (const t of b.tags ?? []) {
+        if (!onThisBill.has(t)) all.add(t);
+      }
+    }
+    return [...all].sort((a, b) => a.localeCompare(b));
+  }, [allBills, bill.tags]);
+
+  const normalizedDraft = normalizeTag(draft);
+  const draftIsValid =
+    normalizedDraft.length > 0 &&
+    normalizedDraft.length <= MAX_TAG_LENGTH &&
+    !tags.includes(normalizedDraft);
+  const showCreateRow =
+    draftIsValid && !candidateTags.includes(normalizedDraft);
+
+  function commitTag(t: string) {
+    const normalized = normalizeTag(t);
+    if (!normalized || normalized.length > MAX_TAG_LENGTH) return;
+    if (tags.includes(normalized)) {
       setDraft('');
       return;
     }
     if (tags.length >= MAX_TAGS_PER_BILL) return;
-    onChange([...tags, t]);
+    onChange([...tags, normalized]);
     setDraft('');
   }
 
@@ -892,7 +977,7 @@ function TagsButton({
         <div className="space-y-1">
           <Label className="text-xs font-medium">Tags</Label>
           <p className="text-[11px] text-muted-foreground">
-            Tag <span className="font-medium">subscription</span> to group bills under the Subscriptions row.
+            Bills sharing a tag are grouped together when two or more share it.
           </p>
         </div>
         {tags.length > 0 ? (
@@ -914,34 +999,40 @@ function TagsButton({
         ) : (
           <p className="text-xs text-muted-foreground">No tags yet.</p>
         )}
-        <div className="flex items-center gap-1.5">
-          <Input
+        <Command className="rounded-md border border-border-subtle">
+          <CommandInput
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                addTag();
-              }
-            }}
-            placeholder="Add tag"
+            onValueChange={setDraft}
+            placeholder="Add or pick a tag…"
             maxLength={MAX_TAG_LENGTH}
             disabled={tags.length >= MAX_TAGS_PER_BILL}
-            className="h-8 flex-1 text-xs"
+            className="h-9 text-xs"
           />
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={addTag}
-            disabled={!normalizeTag(draft) || tags.length >= MAX_TAGS_PER_BILL}
-            className="h-8"
-          >
-            Add
-          </Button>
-        </div>
+          {normalizedDraft.length > 0 ? (
+            <CommandList className="max-h-40">
+              {showCreateRow ? (
+                <CommandItem
+                  value={`__create__${normalizedDraft}`}
+                  onSelect={() => commitTag(normalizedDraft)}
+                >
+                  Create &ldquo;
+                  <span className="font-medium">{normalizedDraft}</span>
+                  &rdquo;
+                </CommandItem>
+              ) : null}
+              {candidateTags.map((t) => (
+                <CommandItem key={t} value={t} onSelect={() => commitTag(t)}>
+                  {t}
+                </CommandItem>
+              ))}
+              <CommandEmpty>No matching tags.</CommandEmpty>
+            </CommandList>
+          ) : null}
+        </Command>
         {tags.length >= MAX_TAGS_PER_BILL ? (
-          <p className="text-[11px] text-warning-700">Limit of {MAX_TAGS_PER_BILL} tags per bill.</p>
+          <p className="text-[11px] text-warning-700">
+            Limit of {MAX_TAGS_PER_BILL} tags per bill.
+          </p>
         ) : null}
       </PopoverContent>
     </Popover>

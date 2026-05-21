@@ -42,7 +42,7 @@ import { expandAllIncome } from '@/lib/recurrence';
 import { visibleIncomeSources } from '@/lib/visibility';
 import { incomeStatusVariant } from '@/lib/badges';
 import { applySort, dirFor, nextDir, type SortState } from '@/lib/sort';
-import { isReceivedIncome } from '@/lib/derived';
+import { incomeAdjEntries, isReceivedIncome } from '@/lib/derived';
 
 const CADENCE_VALUES: IncomeCadence[] = [
   'once',
@@ -117,6 +117,13 @@ export function IncomeTable() {
     for (const r of occurrences) {
       all += r.amount;
       if (isReceivedIncome(r)) conf += r.amount;
+    }
+    const adjEntries = incomeAdjEntries(scoped, effectiveRange);
+    const sourceById = new Map(scoped.map((r) => [r.id, r]));
+    for (const e of adjEntries) {
+      all += e.amount;
+      const source = sourceById.get(e.id);
+      if (source && isReceivedIncome(source)) conf += e.amount;
     }
     return { totalAll: all, totalConfirmed: conf };
   }, [scoped, balance, effectiveRange]);
