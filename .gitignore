@@ -46,3 +46,9 @@ next-env.d.ts
 # playwright mcp artifacts
 .playwright-mcp/
 qa-*.png
+
+# one-shot prod ops artifacts (scripts/restore-prod-from-backup.mjs,
+# scripts/seed-prod-from-prototype.mjs) — all contain prod data
+prod-backup-*.json
+prototype-snapshot-preview-*.json
+scripts/prototype-data.json
